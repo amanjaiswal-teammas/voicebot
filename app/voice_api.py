@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
-from session import create_session
-from conversation import process_call
+from .session import create_session
+from .conversation import process_call
 import os
 from fastapi import Form
 

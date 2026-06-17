@@ -1,11 +1,10 @@
-from stt import transcribe
-from llm import ask_llm
-from supertonic_engine import speak
-from memory import (
+from .stt import transcribe
+from .llm import ask_llm
+from .supertonic_engine import speak
+from .memory import (
     get_history,
     add_message
 )
-from language import detect_language
 import time
 
 
@@ -24,7 +23,13 @@ def process_call(
 
     stt_start = time.time()
 
-    caller_text = transcribe(audio_file)
+    stt_result = transcribe(audio_file)
+
+    caller_text = stt_result["text"]
+
+    lang = stt_result["language"]
+
+    print("WHISPER LANG:", lang)
 
     print(
         "STT:",
@@ -32,8 +37,7 @@ def process_call(
         "sec"
     )
 
-    lang = detect_language(caller_text)
-
+    
     if not caller_text.strip():
         return {
             "caller": "",
@@ -58,7 +62,7 @@ def process_call(
 
     llm_start = time.time()
 
-    answer = ask_llm(history)
+    answer = ask_llm(history, lang)
 
     print(
         "LLM:",
@@ -76,7 +80,7 @@ def process_call(
 
     print("STEP 3: TTS")
 
-    output_file = f"{call_id}.wav"
+    output_file = f"audio/{call_id}.wav"
 
     tts_start = time.time()
 

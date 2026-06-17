@@ -1,9 +1,9 @@
 from faster_whisper import WhisperModel
 
 model = WhisperModel(
-    "small",
-    device="cpu",
-    compute_type="int8"
+    "large-v3",
+    device="cuda",
+    compute_type="float16"
 )
 
 def transcribe(audio_file):
@@ -11,7 +11,7 @@ def transcribe(audio_file):
 
     segments, info = model.transcribe(
         audio_file,
-        language="en",
+        language=None,
         beam_size=5,
         vad_filter=True
     )
@@ -24,4 +24,7 @@ def transcribe(audio_file):
     print("LANGUAGE:", info.language)
     print("TRANSCRIPT:", text)
 
-    return text.strip()
+    return {
+        "text": text.strip(),
+        "language": info.language
+    }

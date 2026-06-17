@@ -1,6 +1,7 @@
 import requests
+import re
 
-from config import OLLAMA_HOST, MODEL_NAME
+from .config import OLLAMA_HOST, MODEL_NAME
 
 SYSTEM_PROMPT = """
 You are a phone assistant.
@@ -13,7 +14,7 @@ Rules:
 """
 
 
-def ask_llm(messages):
+def ask_llm(messages, lang="en"):
 
     payload = {
         "model": MODEL_NAME,
@@ -25,7 +26,9 @@ def ask_llm(messages):
         ] + messages,
         "stream": False,
         "options": {
-            "temperature": 0.3
+            "temperature": 0,
+            "num_predict": 120,
+            "num_ctx": 2048
         }
     }
 
@@ -49,4 +52,20 @@ def ask_llm(messages):
 
     data = response.json()
 
-    return data["message"]["content"].strip()
+    answer = (
+        data.get("message", {})
+            .get("content", "")
+            .strip()
+    )
+
+    if "</think>" in answer:
+        answer = answer.split("</think>")[-1].strip()
+
+    answer = re.sub(
+        r"<think>.*?</think>",
+        "",
+        answer,
+        flags=re.S
+    ).strip()
+
+    return answer
