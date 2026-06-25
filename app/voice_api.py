@@ -35,10 +35,3 @@ async def voice_audio(
         media_type="audio/wav",
         filename="response.wav"
     )
-
-
-@app.post("/end-call")
-async def end_call(call_id: str = Form(...)):
-    end_session(call_id)
-    sessions.pop(call_id, None)
-    return {"ok": True}
