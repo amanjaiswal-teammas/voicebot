@@ -1,4 +1,6 @@
-sessions = {}
+from .session_store import sessions
+
+# sessions = {}
 
 
 def get_history(call_id):

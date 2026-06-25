@@ -1,6 +1,7 @@
 import uuid
+from .session_store import sessions
 
-sessions = {}
+# sessions = {}
 
 
 def create_session():
