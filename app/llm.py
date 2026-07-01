@@ -2,18 +2,25 @@ import requests
 import re
 
 from .config import OLLAMA_HOST, MODEL_NAME
+from .bellavita_prompt import CALL_SCRIPT, OBJECTIONS, PRODUCT_DESCRIPTIONS, HINGLISH_SCRIPT
 
-SYSTEM_PROMPT = """
-You are a phone assistant.
+SYSTEM_PROMPT = f"""{CALL_SCRIPT}
+
+{OBJECTIONS}
+
+{PRODUCT_DESCRIPTIONS}
+
+{HINGLISH_SCRIPT}
 
 Rules:
+- Follow the script flow naturally (Opening → Conversion → Offer → Order → Details → Payment → Confirmation → Closing).
+- Use Hinglish (mix of Hindi and English) when the customer speaks Hindi/Hinglish. Use English otherwise.
 - Use conversation history naturally.
-- Give direct answers.
-- Do not explain your reasoning.
-- Do not show thinking.
-- Ask follow-up questions when useful.
-- Keep responses concise.
-"""
+- Give direct answers. Do not explain your reasoning. Do not show thinking.
+- Keep responses natural and conversational, not robotic.
+- Handle objections using the provided rebuttals.
+- Ask for customer details (name, address, payment) step by step.
+- Confirm order details before closing."""
 
 
 def ask_llm(messages, lang="en"):
@@ -29,8 +36,8 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 120,
-            "num_ctx": 2048
+            "num_predict": 300,
+            "num_ctx": 4096
         }
     }
 
