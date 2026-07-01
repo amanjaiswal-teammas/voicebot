@@ -6,20 +6,20 @@ from .session_store import sessions
 def get_history(call_id):
 
     if call_id not in sessions:
-        sessions[call_id] = []
+        sessions[call_id] = {"messages": []}
 
-    return sessions[call_id]
+    return sessions[call_id]["messages"]
 
 
 def add_message(call_id, role, content):
 
-    history = get_history(call_id)
+    session = sessions.get(call_id, {"messages": []})
 
-    history.append({
+    session["messages"].append({
         "role": role,
         "content": content
     })
 
     # keep last 20 messages
-    if len(history) > 20:
-        sessions[call_id] = history[-20:]
+    if len(session["messages"]) > 20:
+        session["messages"] = session["messages"][-20:]
