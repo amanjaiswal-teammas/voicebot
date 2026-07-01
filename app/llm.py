@@ -2,26 +2,9 @@ import requests
 import re
 
 from .config import OLLAMA_HOST, MODEL_NAME
-from .bellavita_prompt import CALL_SCRIPT, OBJECTIONS, PRODUCT_DESCRIPTIONS, HINGLISH_SCRIPT
+from .bellavita_prompt import SYSTEM_PROMPT as BP_SYSTEM_PROMPT
 
-SYSTEM_PROMPT = f"""{CALL_SCRIPT}
-
-{OBJECTIONS}
-
-{PRODUCT_DESCRIPTIONS}
-
-{HINGLISH_SCRIPT}
-
-Rules:
-- This is an INBOUND call — the customer called you. Start by welcoming them and asking how you can help.
-- Follow the script flow naturally (Opening → Identify Need → Offer → Order → Details → Payment → Confirmation → Closing).
-- Use Hinglish (mix of Hindi and English) when the customer speaks Hindi/Hinglish. Use English otherwise.
-- Use conversation history naturally.
-- Give direct answers. Do not explain your reasoning. Do not show thinking.
-- Keep responses natural and conversational, not robotic.
-- Handle objections using the provided rebuttals.
-- Ask for customer details (name, address, payment) step by step.
-- Confirm order details before closing."""
+SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
 
 def ask_llm(messages, lang="en"):
