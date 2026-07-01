@@ -59,7 +59,7 @@ def speak(text, output_file, lang="en"):
         text,
         lang,
         style,
-        total_step=8,
+        total_step=6,
         speed=1.0
     )
 

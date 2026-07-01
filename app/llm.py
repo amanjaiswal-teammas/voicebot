@@ -20,8 +20,8 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 300,
-            "num_ctx": 4096
+            "num_predict": 200,
+            "num_ctx": 2048
         }
     }
 
