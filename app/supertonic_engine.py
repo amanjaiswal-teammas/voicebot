@@ -46,12 +46,25 @@ def get_tts():
     return _tts, _style
 
 
+import re
+
+
+def _normalize_for_tts(text):
+    text = re.sub(r'\bRs\b', 'Rupees', text, flags=re.IGNORECASE)
+    text = re.sub(r'(?<=\d),(?=\d)', '', text)
+    text = text.replace('%', ' percent ')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
 def speak(text, output_file, lang="en"):
 
     if not text or not text.strip():
         raise Exception(
             "Empty text received for TTS"
         )
+
+    text = _normalize_for_tts(text)
 
     tts, style = get_tts()
 
