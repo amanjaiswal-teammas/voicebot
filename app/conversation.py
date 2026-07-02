@@ -39,10 +39,20 @@ def process_call(
 
     
     if not caller_text.strip():
+
+        output = f"audio/{call_id}_retry.wav"
+
+        speak(
+            "Sorry, I didn't catch that. Could you please repeat?",
+            output,
+            lang,
+        )
+
         return {
+            "call_id": call_id,
             "caller": "",
-            "bot": "I could not hear you clearly.",
-            "audio": None
+            "bot": "Sorry, I didn't catch that.",
+            "audio": output,
         }
 
     print("CALLER:", caller_text)

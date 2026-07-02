@@ -11,11 +11,29 @@ app = FastAPI()
 @app.post("/voice-audio")
 async def voice_audio(
     audio: UploadFile = File(...),
-    call_id: str = Form(None)
+    call_id: str = Form(None),
+    outbound: bool = Form(False),
 ):
     
     if not call_id:
         call_id = create_session()
+
+    if outbound:
+        output = f"audio/{call_id}_welcome.wav"
+
+        from .supertonic_engine import speak
+
+        speak(
+            "Hello. This is the Voice Assistant. Am I speaking with the right person?",
+            output,
+            "en",
+        )
+
+        return FileResponse(
+            output,
+            media_type="audio/wav",
+            filename="welcome.wav",
+        )
 
     temp_file = f"{call_id}.wav"
 
