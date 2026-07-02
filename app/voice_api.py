@@ -1,16 +1,17 @@
+from typing import Optional
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
 from .session import create_session
 from .conversation import process_call
 import os
-from fastapi import Form
+from fastapi import Form, HTTPException
 
 app = FastAPI()
 
 
 @app.post("/voice-audio")
 async def voice_audio(
-    audio: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
     call_id: str = Form(None),
     outbound: bool = Form(False),
 ):
@@ -33,6 +34,12 @@ async def voice_audio(
             output,
             media_type="audio/wav",
             filename="welcome.wav",
+        )
+    
+    if audio is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Audio file missing"
         )
 
     temp_file = f"{call_id}.wav"
