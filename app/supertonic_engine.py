@@ -19,6 +19,14 @@ _tts = None
 _style = None
 
 
+def _warmup():
+    global _tts, _style
+    try:
+        _tts("warmup", "en", _style, total_step=6, speed=1.0)
+    except Exception:
+        pass
+
+
 def get_tts():
     global _tts
     global _style
@@ -42,6 +50,9 @@ def get_tts():
         ])
 
         print("Supertonic Ready")
+        print("Warming up TTS...")
+        _warmup()
+        print("TTS ready")
 
     return _tts, _style
 

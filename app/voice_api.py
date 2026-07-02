@@ -26,13 +26,9 @@ async def voice_audio(
         from .supertonic_engine import speak
 
         greeting = (
-            "Good morning, sir. My name is Siri and I am calling from BellaVita. "
-            "Am I speaking with Mr Prakhar? "
-            "Sir, as I can check you have added a product in your cart on our Bellavita's Website. "
-            "Firstly, I really want to appreciate your choice. "
-            "I noticed you haven't placed the order yet. "
-            "We are currently offering the best exclusive discount on this product. "
-            "May I confirm the order on your behalf?"
+            "Good morning, sir. This is BellaVita. "
+            "You added a product to your cart - we have an exclusive discount for you today. "
+            "May I tell you more about it?"
         )
 
         speak(greeting, output, "en")
