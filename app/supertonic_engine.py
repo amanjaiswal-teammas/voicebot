@@ -45,7 +45,7 @@ def get_tts():
                 SUPERTONIC_DIR,
                 "assets",
                 "voice_styles",
-                "F1.json"
+                "M4.json"
             )
         ])
 
