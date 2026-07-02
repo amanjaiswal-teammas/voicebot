@@ -3,6 +3,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
 from .session import create_session
 from .conversation import process_call
+from .memory import add_message
 import os
 from fastapi import Form, HTTPException
 
@@ -24,11 +25,19 @@ async def voice_audio(
 
         from .supertonic_engine import speak
 
-        speak(
-            "Hello. This is the Voice Assistant. Am I speaking with the right person?",
-            output,
-            "en",
+        greeting = (
+            "Good morning, sir. My name is Aman and I am calling from BellaVita. "
+            "Am I speaking with Mr Prakhar? "
+            "Sir, as I can check you have added a product in your cart on our Bellavita's Website. "
+            "Firstly, I really want to appreciate your choice. "
+            "I noticed you haven't placed the order yet. "
+            "We are currently offering the best exclusive discount on this product. "
+            "May I confirm the order on your behalf?"
         )
+
+        speak(greeting, output, "en")
+
+        add_message(call_id, "assistant", greeting)
 
         return FileResponse(
             output,
