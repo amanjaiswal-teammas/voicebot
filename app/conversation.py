@@ -70,7 +70,7 @@ def process_call(
 
     llm_start = time.time()
 
-    answer = ask_llm(history, lang)
+    answer, hangup = ask_llm(history, lang)
 
     print(
         "LLM:",
@@ -124,5 +124,6 @@ def process_call(
         "call_id": call_id,
         "caller": caller_text,
         "bot": answer,
-        "audio": output_file
+        "audio": output_file,
+        "hangup": hangup,
     }

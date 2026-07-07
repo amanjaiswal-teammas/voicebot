@@ -61,4 +61,7 @@ def ask_llm(messages, lang="en"):
         flags=re.S
     ).strip()
 
-    return answer
+    hangup = "[END]" in answer
+    answer = answer.replace("[END]", "").strip()
+
+    return answer, hangup
