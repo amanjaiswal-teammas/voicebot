@@ -3,7 +3,7 @@ from faster_whisper import WhisperModel
 model = WhisperModel(
     "large-v3",
     device="cuda",
-    compute_type="float16"
+    compute_type="int8_float16"
 )
 
 def transcribe(audio_file):
