@@ -87,8 +87,8 @@ def speak(text, output_file, lang="en"):
         text,
         lang,
         style,
-        total_step=4,
-        speed=1.1
+        total_step=6,
+        speed=1.08
     )
 
     if wav is None:
