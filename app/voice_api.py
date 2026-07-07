@@ -1,7 +1,5 @@
 import os
-import io
 import audioop
-import wave
 import numpy as np
 import soundfile as sf
 from typing import Optional
@@ -43,26 +41,17 @@ def _trim_silence(input_path: str, threshold: float = 0.02, padding: float = 0.3
     return trimmed_path
 
 
-def _wav_to_ulaw(wav_bytes: bytes, gain: float = 1.5) -> bytes:
-    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
-        pcm = w.readframes(w.getnframes())
-    pcm = audioop.mul(pcm, 2, gain)
-    return audioop.lin2ulaw(pcm, 2)
-
-
-def _resample_to_8k_bytes(input_path: str) -> bytes:
-    from scipy import signal
-
+def _audio_to_ulaw(input_path: str, gain: float = 1.5) -> bytes:
     data, sr = sf.read(input_path)
-    if sr == 8000:
-        with open(input_path, "rb") as f:
-            return f.read()
-
-    num = int(len(data) * 8000 / sr)
-    resampled = signal.resample(data, num).astype(np.float32)
-    buf = io.BytesIO()
-    sf.write(buf, resampled, 8000, format="WAV", subtype="PCM_16")
-    return buf.getvalue()
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    if sr != 8000:
+        target_len = int(len(data) * 8000 / sr)
+        x_new = np.linspace(0, len(data) - 1, target_len)
+        data = np.interp(x_new, np.arange(len(data)), data).astype(np.float32)
+    pcm = (data * 32767).clip(-32768, 32767).astype(np.int16)
+    pcm_bytes = audioop.mul(pcm.tobytes(), 2, gain)
+    return audioop.lin2ulaw(pcm_bytes, 2)
 
 
 def _preload_greeting():
@@ -73,8 +62,7 @@ def _preload_greeting():
     if not os.path.exists(path):
         print("PRELOAD: Generating greeting TTS...")
         speak(GREETING_TEXT, path, "en")
-    wav = _resample_to_8k_bytes(path)
-    _cached_greeting_ulaw = _wav_to_ulaw(wav)
+    _cached_greeting_ulaw = _audio_to_ulaw(path)
     print("PRELOAD: Greeting cached (µ-law).")
 
 
@@ -110,8 +98,16 @@ async def voice_audio(
     result = process_call(call_id, trimmed)
     if trimmed != temp_file and os.path.exists(trimmed):
         os.remove(trimmed)
+    if os.path.exists(temp_file):
+        os.remove(temp_file)
 
-    out_path = result["audio"]
-    wav_bytes = _resample_to_8k_bytes(out_path)
-    ulaw_bytes = _wav_to_ulaw(wav_bytes)
-    return Response(content=ulaw_bytes, media_type="audio/x-mulaw")
+    out_path = result.get("audio")
+    if out_path and os.path.exists(out_path):
+        ulaw_bytes = _audio_to_ulaw(out_path)
+        os.remove(out_path)
+        return Response(content=ulaw_bytes, media_type="audio/x-mulaw")
+
+    return Response(
+        content=_cached_greeting_ulaw,
+        media_type="audio/x-mulaw",
+    )

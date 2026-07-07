@@ -8,8 +8,6 @@ from .memory import (
 import time
 
 
-start_total = time.time()
-
 def process_call(
     call_id,
     audio_file
@@ -33,8 +31,8 @@ def process_call(
 
     print(
         "STT:",
-        round(time.time() - stt_start, 2),
-        "sec"
+        int((time.time() - stt_start) * 1000),
+        "ms"
     )
 
     
@@ -76,8 +74,8 @@ def process_call(
 
     print(
         "LLM:",
-        round(time.time() - llm_start, 2),
-        "sec"
+        int((time.time() - llm_start) * 1000),
+        "ms"
     )
 
     add_message(
@@ -112,14 +110,14 @@ def process_call(
 
     print(
         "TTS:",
-        round(time.time() - tts_start, 2),
-        "sec"
+        int((time.time() - tts_start) * 1000),
+        "ms"
     )
 
     print(
         "TOTAL:",
-        round(time.time() - start_total, 2),
-        "sec"
+        int((time.time() - start_total) * 1000),
+        "ms"
     )
 
     return {
