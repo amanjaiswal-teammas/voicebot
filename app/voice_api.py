@@ -1,4 +1,6 @@
 import os
+import io
+import wave
 import audioop
 import numpy as np
 import soundfile as sf
@@ -49,9 +51,13 @@ def _audio_to_ulaw(input_path: str, gain: float = 1.5) -> bytes:
         target_len = int(len(data) * 8000 / sr)
         x_new = np.linspace(0, len(data) - 1, target_len)
         data = np.interp(x_new, np.arange(len(data)), data).astype(np.float32)
-    pcm = (data * 32767).clip(-32768, 32767).astype(np.int16)
-    pcm_bytes = audioop.mul(pcm.tobytes(), 2, gain)
-    return audioop.lin2ulaw(pcm_bytes, 2)
+    buf = io.BytesIO()
+    sf.write(buf, data, 8000, format="WAV", subtype="PCM_16")
+    buf.seek(0)
+    with wave.open(buf, "rb") as w:
+        pcm = w.readframes(w.getnframes())
+    pcm = audioop.mul(pcm, 2, gain)
+    return audioop.lin2ulaw(pcm, 2)
 
 
 def _preload_greeting():
