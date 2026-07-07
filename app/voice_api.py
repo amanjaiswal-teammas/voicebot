@@ -115,11 +115,15 @@ async def voice_audio(
             print(f"AUDIO DIAG: sr={diag_sr} len=0 EMPTY FILE")
     except Exception as e:
         print(f"AUDIO DIAG ERROR: {e}")
+        diag_data = None
 
-    trimmed = _trim_silence(temp_file)
-    result = process_call(call_id, trimmed)
-    if trimmed != temp_file and os.path.exists(trimmed):
-        os.remove(trimmed)
+    if diag_data is None or len(diag_data) == 0:
+        result = process_call(call_id, None)
+    else:
+        trimmed = _trim_silence(temp_file)
+        result = process_call(call_id, trimmed)
+        if trimmed != temp_file and os.path.exists(trimmed):
+            os.remove(trimmed)
     if os.path.exists(temp_file):
         os.remove(temp_file)
 

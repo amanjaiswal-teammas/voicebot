@@ -20,21 +20,25 @@ def process_call(
 
     start_total = time.time()
 
-    stt_start = time.time()
+    if audio_file is None:
+        caller_text = ""
+        lang = "en"
+    else:
+        stt_start = time.time()
 
-    stt_result = transcribe(audio_file)
+        stt_result = transcribe(audio_file)
 
-    caller_text = stt_result["text"]
+        caller_text = stt_result["text"]
 
-    lang = stt_result["language"]
+        lang = stt_result["language"]
 
-    print("WHISPER LANG:", lang)
+        print("WHISPER LANG:", lang)
 
-    print(
-        "STT:",
-        int((time.time() - stt_start) * 1000),
-        "ms"
-    )
+        print(
+            "STT:",
+            int((time.time() - stt_start) * 1000),
+            "ms"
+        )
 
     
     if not caller_text.strip():
