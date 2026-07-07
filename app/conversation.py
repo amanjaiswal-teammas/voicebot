@@ -86,6 +86,12 @@ def process_call(
 
     print("BOT:", answer)
 
+    if not hangup:
+        goodbye_words = ["have a great day", "have a nice day", "have a good day"]
+        if any(w in answer.lower() for w in goodbye_words):
+            hangup = True
+            print("HANGUP AUTO-DETECTED (goodbye phrase)")
+
     print("STEP 3: TTS")
 
     output_file = f"audio/{call_id}.wav"

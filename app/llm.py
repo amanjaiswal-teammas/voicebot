@@ -21,7 +21,7 @@ def ask_llm(messages, lang="en"):
         "options": {
             "temperature": 0,
             "num_predict": 200,
-            "num_ctx": 2048
+            "num_ctx": 4096
         }
     }
 
