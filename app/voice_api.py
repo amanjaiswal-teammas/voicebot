@@ -3,6 +3,7 @@ import io
 import audioop
 import wave
 import numpy as np
+import soundfile as sf
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
@@ -26,6 +27,22 @@ _cached_greeting_ulaw: Optional[bytes] = None
 app = FastAPI()
 
 
+def _trim_silence(input_path: str, threshold: float = 0.02, padding: float = 0.3) -> str:
+    data, sr = sf.read(input_path)
+    if len(data.shape) > 1:
+        data = data.mean(axis=1)
+    mask = np.abs(data) > threshold
+    indices = np.where(mask)[0]
+    if len(indices) == 0:
+        return input_path
+    start = max(0, int(indices[0] - padding * sr))
+    end = min(len(data), int(indices[-1] + padding * sr))
+    trimmed = data[start:end]
+    trimmed_path = input_path.replace(".wav", "_trimmed.wav")
+    sf.write(trimmed_path, trimmed, sr)
+    return trimmed_path
+
+
 def _wav_to_ulaw(wav_bytes: bytes, gain: float = 1.5) -> bytes:
     with wave.open(io.BytesIO(wav_bytes), "rb") as w:
         pcm = w.readframes(w.getnframes())
@@ -35,7 +52,6 @@ def _wav_to_ulaw(wav_bytes: bytes, gain: float = 1.5) -> bytes:
 
 def _resample_to_8k_bytes(input_path: str) -> bytes:
     from scipy import signal
-    import soundfile as sf
 
     data, sr = sf.read(input_path)
     if sr == 8000:
@@ -90,7 +106,10 @@ async def voice_audio(
     with open(temp_file, "wb") as f:
         f.write(await audio.read())
 
-    result = process_call(call_id, temp_file)
+    trimmed = _trim_silence(temp_file)
+    result = process_call(call_id, trimmed)
+    if trimmed != temp_file and os.path.exists(trimmed):
+        os.remove(trimmed)
 
     out_path = result["audio"]
     wav_bytes = _resample_to_8k_bytes(out_path)
