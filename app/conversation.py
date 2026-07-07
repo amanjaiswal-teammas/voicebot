@@ -5,6 +5,7 @@ from .memory import (
     get_history,
     add_message
 )
+from .session_store import sessions
 import time
 
 
@@ -38,6 +39,21 @@ def process_call(
     
     if not caller_text.strip():
 
+        retries = sessions.get(call_id, {}).get("silent_retries", 0) + 1
+        if call_id not in sessions:
+            sessions[call_id] = {}
+        sessions[call_id]["silent_retries"] = retries
+
+        if retries >= 3:
+            print(f"SILENT RETRY {retries} — HANGING UP")
+            return {
+                "call_id": call_id,
+                "caller": "",
+                "bot": "",
+                "audio": None,
+                "hangup": True,
+            }
+
         output = f"audio/{call_id}_retry.wav"
 
         speak(
@@ -54,6 +70,9 @@ def process_call(
         }
 
     print("CALLER:", caller_text)
+
+    if call_id in sessions:
+        sessions[call_id]["silent_retries"] = 0
 
     add_message(
         call_id,

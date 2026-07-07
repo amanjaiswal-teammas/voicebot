@@ -123,15 +123,21 @@ async def voice_audio(
     if os.path.exists(temp_file):
         os.remove(temp_file)
 
+    if result.get("hangup"):
+        out_path = result.get("audio")
+        if out_path and os.path.exists(out_path):
+            ulaw_bytes = _audio_to_ulaw(out_path)
+            os.remove(out_path)
+        else:
+            ulaw_bytes = b""
+        print("HANGUP SIGNALED")
+        return Response(content=ulaw_bytes, media_type="audio/x-mulaw", headers={"X-Hangup": "true"})
+
     out_path = result.get("audio")
     if out_path and os.path.exists(out_path):
         ulaw_bytes = _audio_to_ulaw(out_path)
         os.remove(out_path)
-        headers = {}
-        if result.get("hangup"):
-            headers["X-Hangup"] = "true"
-            print("HANGUP SIGNALED")
-        return Response(content=ulaw_bytes, media_type="audio/x-mulaw", headers=headers)
+        return Response(content=ulaw_bytes, media_type="audio/x-mulaw")
 
     return Response(
         content=_cached_greeting_ulaw,
