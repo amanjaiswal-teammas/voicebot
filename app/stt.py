@@ -1,7 +1,7 @@
 from faster_whisper import WhisperModel
 
 model = WhisperModel(
-    "large-v3",
+    "medium",
     device="cuda",
     compute_type="int8_float16"
 )
@@ -12,7 +12,7 @@ def transcribe(audio_file):
     segments, info = model.transcribe(
         audio_file,
         language=None,
-        beam_size=5,
+        beam_size=3,
         vad_filter=True
     )
 
