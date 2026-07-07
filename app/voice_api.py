@@ -100,6 +100,17 @@ async def voice_audio(
     with open(temp_file, "wb") as f:
         f.write(await audio.read())
 
+    try:
+        diag_data, diag_sr = sf.read(temp_file)
+        if len(diag_data) > 0:
+            peak = float(np.abs(diag_data).max())
+            rms = float(np.sqrt(np.mean(diag_data ** 2)))
+            print(f"AUDIO DIAG: sr={diag_sr} len={len(diag_data)} peak={peak:.5f} rms={rms:.5f}")
+        else:
+            print(f"AUDIO DIAG: sr={diag_sr} len=0 EMPTY FILE")
+    except Exception as e:
+        print(f"AUDIO DIAG ERROR: {e}")
+
     trimmed = _trim_silence(temp_file)
     result = process_call(call_id, trimmed)
     if trimmed != temp_file and os.path.exists(trimmed):
