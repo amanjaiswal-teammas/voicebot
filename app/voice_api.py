@@ -4,6 +4,7 @@ import wave
 import audioop
 import numpy as np
 import soundfile as sf
+from scipy.signal import resample_poly
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
@@ -43,20 +44,24 @@ def _trim_silence(input_path: str, threshold: float = 0.02, padding: float = 0.3
     return trimmed_path
 
 
-def _audio_to_ulaw(input_path: str, gain: float = 1.5) -> bytes:
+def _audio_to_ulaw(input_path: str) -> bytes:
     data, sr = sf.read(input_path)
     if data.ndim > 1:
         data = data.mean(axis=1)
     if sr != 8000:
-        target_len = int(len(data) * 8000 / sr)
-        x_new = np.linspace(0, len(data) - 1, target_len)
-        data = np.interp(x_new, np.arange(len(data)), data).astype(np.float32)
+        up = 8000
+        down = sr
+        g = int(np.gcd(up, down))
+        data = resample_poly(data, up // g, down // g)
+        data = data.astype(np.float32)
+    peak = np.abs(data).max()
+    if peak > 0.95:
+        data = data / peak * 0.95
     buf = io.BytesIO()
     sf.write(buf, data, 8000, format="WAV", subtype="PCM_16")
     buf.seek(0)
     with wave.open(buf, "rb") as w:
         pcm = w.readframes(w.getnframes())
-    pcm = audioop.mul(pcm, 2, gain)
     return audioop.lin2ulaw(pcm, 2)
 
 
