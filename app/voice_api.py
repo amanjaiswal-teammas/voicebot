@@ -1,5 +1,7 @@
 import os
 import io
+import audioop
+import wave
 import numpy as np
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -19,9 +21,16 @@ GREETING_TEXT = (
     "May I tell you more about it?"
 )
 
-_cached_greeting_wav: Optional[bytes] = None
+_cached_greeting_ulaw: Optional[bytes] = None
 
 app = FastAPI()
+
+
+def _wav_to_ulaw(wav_bytes: bytes, gain: float = 1.5) -> bytes:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        pcm = w.readframes(w.getnframes())
+    pcm = audioop.mul(pcm, 2, gain)
+    return audioop.lin2ulaw(pcm, 2)
 
 
 def _resample_to_8k_bytes(input_path: str) -> bytes:
@@ -41,24 +50,21 @@ def _resample_to_8k_bytes(input_path: str) -> bytes:
 
 
 def _preload_greeting():
-    global _cached_greeting_wav
+    global _cached_greeting_ulaw
     from .supertonic_engine import speak
 
     path = f"{AUDIO_DIR}/_greeting.wav"
     if not os.path.exists(path):
         print("PRELOAD: Generating greeting TTS...")
         speak(GREETING_TEXT, path, "en")
-    _cached_greeting_wav = _resample_to_8k_bytes(path)
-    print("PRELOAD: Greeting cached.")
+    wav = _resample_to_8k_bytes(path)
+    _cached_greeting_ulaw = _wav_to_ulaw(wav)
+    print("PRELOAD: Greeting cached (µ-law).")
 
 
 @app.on_event("startup")
 async def startup():
     _preload_greeting()
-
-
-def resample_to_8k(input_path: str) -> bytes:
-    return _resample_to_8k_bytes(input_path)
 
 
 @app.post("/voice-audio")
@@ -73,8 +79,8 @@ async def voice_audio(
     if outbound:
         add_message(call_id, "assistant", GREETING_TEXT)
         return Response(
-            content=_cached_greeting_wav,
-            media_type="audio/wav",
+            content=_cached_greeting_ulaw,
+            media_type="audio/x-mulaw",
         )
 
     if audio is None:
@@ -87,5 +93,6 @@ async def voice_audio(
     result = process_call(call_id, temp_file)
 
     out_path = result["audio"]
-    wav_bytes = resample_to_8k(out_path)
-    return Response(content=wav_bytes, media_type="audio/wav")
+    wav_bytes = _resample_to_8k_bytes(out_path)
+    ulaw_bytes = _wav_to_ulaw(wav_bytes)
+    return Response(content=ulaw_bytes, media_type="audio/x-mulaw")
