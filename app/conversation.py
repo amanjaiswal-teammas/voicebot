@@ -45,7 +45,7 @@ def process_call(
         speak(
             "Sorry, I didn't catch that. Could you please repeat?",
             output,
-            lang,
+            "en",
         )
 
         return {

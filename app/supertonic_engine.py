@@ -11,6 +11,7 @@ SUPERTONIC_DIR = os.path.abspath(
 sys.path.insert(0, os.path.join(SUPERTONIC_DIR, "py"))
 
 from helper import (
+    AVAILABLE_LANGS,
     load_text_to_speech,
     load_voice_style
 )
@@ -74,6 +75,9 @@ def speak(text, output_file, lang="en"):
         raise Exception(
             "Empty text received for TTS"
         )
+
+    if lang not in AVAILABLE_LANGS:
+        lang = "en"
 
     text = _normalize_for_tts(text)
 
