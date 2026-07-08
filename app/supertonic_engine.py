@@ -23,7 +23,7 @@ _style = None
 def _warmup():
     global _tts, _style
     try:
-        _tts("warmup", "en", _style, total_step=4, speed=1.0)
+        _tts("warmup", "en", _style, total_step=6, speed=1.0)
     except Exception:
         pass
 
@@ -38,7 +38,7 @@ def get_tts():
 
         _tts = load_text_to_speech(
             os.path.join(SUPERTONIC_DIR, "assets", "onnx"),
-            False
+            True
         )
 
         _style = load_voice_style([
@@ -87,8 +87,8 @@ def speak(text, output_file, lang="en"):
         text,
         lang,
         style,
-        total_step=4,
-        speed=1.15
+        total_step=5,
+        speed=1.1
     )
 
     if wav is None:
