@@ -88,8 +88,7 @@ def process_call(
 
     history = get_history(call_id)
 
-    # keep last 10 messages
-    history = history[-20:]
+    history = history[-10:]
 
     llm_start = time.time()
 

@@ -12,7 +12,8 @@ def transcribe(audio_file):
     segments, info = model.transcribe(
         audio_file,
         language=None,
-        beam_size=3,
+        beam_size=1,
+        best_of=1,
         vad_filter=True
     )
 

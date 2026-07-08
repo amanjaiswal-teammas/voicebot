@@ -20,8 +20,8 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 80,
-            "num_ctx": 2048
+            "num_predict": 60,
+            "num_ctx": 1024
         }
     }
 
@@ -29,7 +29,7 @@ def ask_llm(messages, lang="en"):
         response = requests.post(
             f"{OLLAMA_HOST}/api/chat",
             json=payload,
-            timeout=300
+            timeout=30
         )
 
         response.raise_for_status()
