@@ -67,7 +67,11 @@ def _audio_to_ulaw(input_path: str) -> bytes:
 
 def _preload_greeting():
     global _cached_greeting_ulaw
-    from .supertonic_engine import speak
+    from .supertonic_engine import get_tts, speak
+
+    print("PRELOAD: Loading TTS model...")
+    get_tts()
+    print("PRELOAD: TTS model ready.")
 
     path = f"{AUDIO_DIR}/_greeting.wav"
     if not os.path.exists(path):
