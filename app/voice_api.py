@@ -122,7 +122,7 @@ async def check_speech(audio: UploadFile = File(...)):
         print(f"CHECK-SPEECH: bad rms={rms} len={len(data)}")
         rms = 0.0
     print(f"CHECK-SPEECH: rms={rms:.5f} len={len(data)}")
-    return {"speech_detected": rms > 0.015, "rms": rms}
+    return {"speech_detected": rms > 0.01, "rms": rms}
 
 
 @app.post("/voice-audio-segmented")
