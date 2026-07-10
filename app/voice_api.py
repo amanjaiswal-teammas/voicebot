@@ -106,14 +106,21 @@ async def startup():
 
 @app.post("/check-speech")
 async def check_speech(audio: UploadFile = File(...)):
-    temp = f"{AUDIO_DIR}/_check.wav"
+    import uuid
+    temp = f"{AUDIO_DIR}/_check_{uuid.uuid4().hex}.wav"
     with open(temp, "wb") as f:
         f.write(await audio.read())
     data, sr = sf.read(temp)
     os.remove(temp)
+    if len(data) == 0:
+        print("CHECK-SPEECH: empty file")
+        return {"speech_detected": False, "rms": 0.0}
     if len(data.shape) > 1:
         data = data.mean(axis=1)
     rms = float(np.sqrt(np.mean(data ** 2)))
+    if np.isnan(rms) or np.isinf(rms):
+        print(f"CHECK-SPEECH: bad rms={rms} len={len(data)}")
+        rms = 0.0
     print(f"CHECK-SPEECH: rms={rms:.5f} len={len(data)}")
     return {"speech_detected": rms > 0.015, "rms": rms}
 
