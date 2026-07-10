@@ -61,19 +61,35 @@ def get_tts():
     return _tts, _style
 
 
-def split_into_segments(text, max_words=20):
-    segments = re.split(r'(?<=[.!?])\s+', text)
-    result = []
-    for seg in segments:
-        seg = seg.strip()
-        if not seg:
+def split_into_segments(text, max_words=50):
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    segments = []
+    for s in sentences:
+        s = s.strip()
+        if not s:
             continue
-        words = seg.split()
+        words = s.split()
         if len(words) <= max_words:
-            result.append(seg)
+            segments.append(s)
         else:
             for i in range(0, len(words), max_words):
-                result.append(' '.join(words[i:i + max_words]))
+                segments.append(' '.join(words[i:i + max_words]))
+    if not segments:
+        segments = [text]
+    result = []
+    buf = []
+    buf_words = 0
+    for seg in segments:
+        n = len(seg.split())
+        if buf_words + n > max_words:
+            result.append(' '.join(buf))
+            buf = [seg]
+            buf_words = n
+        else:
+            buf.append(seg)
+            buf_words += n
+    if buf:
+        result.append(' '.join(buf))
     return result if result else [text]
 
 
