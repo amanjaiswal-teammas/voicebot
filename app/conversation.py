@@ -11,7 +11,8 @@ import time
 
 def process_call(
     call_id,
-    audio_file
+    audio_file,
+    interrupted_text=None,
 ):
 
     print("STEP 1: STT")
@@ -77,6 +78,17 @@ def process_call(
 
     if call_id in sessions:
         sessions[call_id]["silent_retries"] = 0
+
+    if interrupted_text:
+        context = (
+            f"[The customer interrupted you. "
+            f"You were saying: \"{interrupted_text}\". "
+            f"The customer then said: \"{caller_text}\". "
+            f"Respond naturally, acknowledging their interruption "
+            f"if appropriate.]"
+        )
+        print("INTERRUPTED CONTEXT:", context)
+        add_message(call_id, "system", context)
 
     add_message(
         call_id,

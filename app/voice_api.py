@@ -1,6 +1,8 @@
 import os
 import io
+import json
 import wave
+import base64
 import audioop
 import numpy as np
 import soundfile as sf
@@ -12,6 +14,7 @@ from fastapi.responses import Response
 from .session import create_session
 from .conversation import process_call
 from .memory import add_message
+from .supertonic_engine import speak_segments, speak
 
 AUDIO_DIR = "audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
@@ -24,6 +27,7 @@ GREETING_TEXT = (
 )
 
 _cached_greeting_ulaw: Optional[bytes] = None
+_cached_greeting_segments: Optional[str] = None
 
 app = FastAPI()
 
@@ -66,7 +70,7 @@ def _audio_to_ulaw(input_path: str) -> bytes:
 
 
 def _preload_greeting():
-    global _cached_greeting_ulaw
+    global _cached_greeting_ulaw, _cached_greeting_segments
     from .supertonic_engine import get_tts, speak
 
     print("PRELOAD: Loading TTS model...")
@@ -78,12 +82,106 @@ def _preload_greeting():
         print("PRELOAD: Generating greeting TTS...")
         speak(GREETING_TEXT, path, "en")
     _cached_greeting_ulaw = _audio_to_ulaw(path)
-    print("PRELOAD: Greeting cached (µ-law).")
+
+    print("PRELOAD: Preloading greeting segments...")
+    segs = speak_segments(GREETING_TEXT, "en", prefix="greeting")
+    segments_json = []
+    for text, seg_path in segs:
+        ulaw_bytes = _audio_to_ulaw(seg_path)
+        os.remove(seg_path)
+        segments_json.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+    _cached_greeting_segments = json.dumps(
+        {"call_id": "", "segments": segments_json, "hangup": False}
+    )
+    print("PRELOAD: Greeting cached (µ-law + segments).")
 
 
 @app.on_event("startup")
 async def startup():
     _preload_greeting()
+
+
+@app.post("/check-speech")
+async def check_speech(audio: UploadFile = File(...)):
+    temp = f"{AUDIO_DIR}/_check.wav"
+    with open(temp, "wb") as f:
+        f.write(await audio.read())
+    data, sr = sf.read(temp)
+    os.remove(temp)
+    if len(data.shape) > 1:
+        data = data.mean(axis=1)
+    rms = float(np.sqrt(np.mean(data ** 2)))
+    print(f"CHECK-SPEECH: rms={rms:.5f} len={len(data)}")
+    return {"speech_detected": rms > 0.015, "rms": rms}
+
+
+@app.post("/voice-audio-segmented")
+async def voice_audio_segmented(
+    audio: Optional[UploadFile] = File(None),
+    call_id: str = Form(None),
+    outbound: bool = Form(False),
+    interrupted_text: Optional[str] = Form(None),
+):
+    if not call_id:
+        call_id = create_session()
+
+    if outbound:
+        add_message(call_id, "assistant", GREETING_TEXT)
+        data = json.loads(_cached_greeting_segments)
+        data["call_id"] = call_id
+        return Response(
+            content=json.dumps(data),
+            media_type="application/json",
+        )
+
+    if audio is None:
+        raise HTTPException(status_code=400, detail="Audio file missing")
+
+    temp_file = f"{AUDIO_DIR}/{call_id}_in.wav"
+    with open(temp_file, "wb") as f:
+        f.write(await audio.read())
+
+    try:
+        diag_data, diag_sr = sf.read(temp_file)
+        if len(diag_data) > 0:
+            peak = float(np.abs(diag_data).max())
+            rms = float(np.sqrt(np.mean(diag_data ** 2)))
+            print(f"SEG AUDIO DIAG: sr={diag_sr} len={len(diag_data)} peak={peak:.5f} rms={rms:.5f}")
+    except Exception as e:
+        print(f"SEG AUDIO DIAG ERROR: {e}")
+        diag_data = None
+
+    if diag_data is None or len(diag_data) == 0:
+        result = process_call(call_id, None, interrupted_text=interrupted_text)
+    else:
+        trimmed = _trim_silence(temp_file)
+        result = process_call(call_id, trimmed, interrupted_text=interrupted_text)
+        if trimmed != temp_file and os.path.exists(trimmed):
+            os.remove(trimmed)
+    if os.path.exists(temp_file):
+        os.remove(temp_file)
+
+    bot_text = result.get("bot", "")
+    hangup = result.get("hangup", False)
+
+    segs = speak_segments(bot_text, "en", prefix=call_id)
+    segments_json = []
+    for text, path in segs:
+        ulaw_bytes = _audio_to_ulaw(path)
+        os.remove(path)
+        segments_json.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+
+    resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
+    return Response(
+        content=json.dumps(resp),
+        media_type="application/json",
+    )
 
 
 @app.post("/voice-audio")

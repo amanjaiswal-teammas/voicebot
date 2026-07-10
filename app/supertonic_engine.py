@@ -1,6 +1,9 @@
 import os
 import sys
+import re
+import io
 import soundfile as sf
+import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -58,7 +61,30 @@ def get_tts():
     return _tts, _style
 
 
-import re
+def split_into_segments(text, max_words=20):
+    segments = re.split(r'(?<=[.!?])\s+', text)
+    result = []
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        words = seg.split()
+        if len(words) <= max_words:
+            result.append(seg)
+        else:
+            for i in range(0, len(words), max_words):
+                result.append(' '.join(words[i:i + max_words]))
+    return result if result else [text]
+
+
+def speak_segments(text, lang="en", prefix=""):
+    segments = split_into_segments(text)
+    paths = []
+    for i, seg in enumerate(segments):
+        outpath = f"audio/{prefix}_seg_{i}.wav"
+        speak(seg, outpath, lang)
+        paths.append((seg, outpath))
+    return paths
 
 
 def _normalize_for_tts(text):
