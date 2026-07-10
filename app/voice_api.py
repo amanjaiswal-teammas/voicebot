@@ -121,8 +121,12 @@ async def check_speech(audio: UploadFile = File(...)):
     if np.isnan(rms) or np.isinf(rms):
         print(f"CHECK-SPEECH: bad rms={rms} len={len(data)}")
         rms = 0.0
-    print(f"CHECK-SPEECH: rms={rms:.5f} len={len(data)}")
-    return {"speech_detected": rms > 0.01, "rms": rms}
+    active = int(np.sum(np.abs(data) > 0.005))
+    active_ms = active / sr * 1000
+    speech = rms > 0.015 and active_ms > 80
+    print(f"CHECK-SPEECH: rms={rms:.5f} active={active_ms:.0f}ms "
+          f"speech={speech} len={len(data)}")
+    return {"speech_detected": speech, "rms": rms}
 
 
 @app.post("/voice-audio-segmented")
@@ -164,10 +168,17 @@ async def voice_audio_segmented(
     if diag_data is None or len(diag_data) == 0:
         result = process_call(call_id, None, interrupted_text=interrupted_text)
     else:
-        trimmed = _trim_silence(temp_file)
-        result = process_call(call_id, trimmed, interrupted_text=interrupted_text)
-        if trimmed != temp_file and os.path.exists(trimmed):
-            os.remove(trimmed)
+        active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > 0.02))
+        active_ms = active / max(diag_sr, 1) * 1000
+        treat_silent = rms < 0.01 or active_ms < 200
+        print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms treat_silent={treat_silent}")
+        if treat_silent:
+            result = process_call(call_id, None, interrupted_text=interrupted_text)
+        else:
+            trimmed = _trim_silence(temp_file)
+            result = process_call(call_id, trimmed, interrupted_text=interrupted_text)
+            if trimmed != temp_file and os.path.exists(trimmed):
+                os.remove(trimmed)
     if os.path.exists(temp_file):
         os.remove(temp_file)
 
