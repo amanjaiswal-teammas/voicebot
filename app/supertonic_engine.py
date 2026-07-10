@@ -26,7 +26,7 @@ _style = None
 def _warmup():
     global _tts, _style
     try:
-        _tts("warmup", "en", _style, total_step=6, speed=1.35)
+        _tts("warmup", "en", _style, total_step=6, speed=1.2)
     except Exception:
         pass
 
@@ -114,7 +114,7 @@ def speak(text, output_file, lang="en"):
         lang,
         style,
         total_step=5,
-        speed=1.35
+        speed=1.2
     )
 
     if wav is None:
