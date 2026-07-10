@@ -61,7 +61,7 @@ def get_tts():
     return _tts, _style
 
 
-def split_into_segments(text, max_words=6):
+def split_into_segments(text, max_words=10):
     words = text.split()
     if not words:
         return [text]
