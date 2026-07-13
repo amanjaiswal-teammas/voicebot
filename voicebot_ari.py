@@ -327,7 +327,7 @@ class AMIClient:
                 f"Action: MixMonitor\r\n"
                 f"Channel: {channel_id}\r\n"
                 f"File: {filepath}\r\n"
-                f"Options: r\r\n\r\n"
+                f"Options: ri\r\n\r\n"
             )
             await self._send(cmd)
             resp = await self._read_until(b"\r\n\r\n")
@@ -435,7 +435,8 @@ class CallHandler:
         """Read new audio bytes from the MixMonitor file since last read.
 
         Returns float32 samples (8kHz) or None if no new data.
-        MixMonitor with 'r' option writes raw signed 16-bit mono PCM.
+        MixMonitor with 'ri' option writes raw signed 16-bit mono PCM
+        of the caller's audio only (read/input direction).
         """
         try:
             if not os.path.exists(self._mix_path):
@@ -634,6 +635,16 @@ class CallHandler:
         """
         interrupted_text = None
         bargein_recording = None
+
+        # Reset offset so we only read audio captured from NOW forward.
+        # Discards stale audio from greeting / previous segments.
+        if check_bargein and self._mix_active:
+            try:
+                if os.path.exists(self._mix_path):
+                    self._mix_offset = os.path.getsize(self._mix_path)
+                    log.info(f"BARGEIN: offset reset to {self._mix_offset}")
+            except Exception:
+                pass
 
         for i, seg in enumerate(segments):
             ok, text, pb_id = await self._play_segment(seg, i)
