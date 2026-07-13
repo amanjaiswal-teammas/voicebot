@@ -436,9 +436,8 @@ class CallHandler:
         while True:
             await asyncio.sleep(0.1)
             state = await self.ari.playback_state(pb_id)
-            if state in ("done", "failed"):
+            if state in ("done", "failed", None):
                 return
-            # state is None (transient ARI error) or "playing" — keep waiting
 
     # ── Play all segments ───────────────────────────────────────
 
