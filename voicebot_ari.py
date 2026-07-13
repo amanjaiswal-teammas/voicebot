@@ -318,36 +318,32 @@ class AMIClient:
             pass
         return data
 
-    async def start_mixmonitor(self, channel_id: str, filepath: str):
-        """Start MixMonitor capturing caller audio (read direction) to file."""
+    async def start_monitor(self, channel_id: str, filepath: str):
+        """Start AMI Monitor capturing caller audio (read direction) to WAV."""
         if not self._connected:
             return None
         async with self._lock:
             cmd = (
-                f"Action: MixMonitor\r\n"
+                f"Action: Monitor\r\n"
                 f"Channel: {channel_id}\r\n"
                 f"File: {filepath}\r\n"
-                f"Options: ri\r\n\r\n"
+                f"Format: rwav\r\n"
+                f"Limit: 0\r\n\r\n"
             )
             await self._send(cmd)
             resp = await self._read_until(b"\r\n\r\n")
-            # Extract MixMonitorID if present
-            mid = None
-            for line in resp.decode(errors="replace").split("\r\n"):
-                if line.startswith("MixMonitorID:"):
-                    mid = line.split(":", 1)[1].strip()
-            log.info(f"MixMonitor started: {filepath} id={mid}")
-            return mid
+            log.info(f"Monitor started: {filepath} resp={resp[:120]}")
+            return True
 
-    async def stop_mixmonitor(self, channel_id: str, mid: str = None):
-        """Stop MixMonitor on the channel."""
+    async def stop_monitor(self, channel_id: str):
+        """Stop AMI Monitor on the channel."""
         if not self._connected:
             return
         async with self._lock:
-            cmd = f"Action: StopMixMonitor\r\nChannel: {channel_id}\r\n"
-            if mid:
-                cmd += f"MixMonitorID: {mid}\r\n"
-            cmd += "\r\n"
+            cmd = (
+                f"Action: StopMonitor\r\n"
+                f"Channel: {channel_id}\r\n\r\n"
+            )
             await self._send(cmd)
             await self._read_until(b"\r\n\r\n", timeout=1)
 
@@ -384,8 +380,9 @@ class CallHandler:
         self.call_id = str(uuid.uuid4())
         self._http: aiohttp.ClientSession = None
         self._mix_id = None
-        self._mix_path = f"/tmp/{self.call_id}_caller.raw"
+        self._mix_path = f"/tmp/{self.call_id}_caller"
         self._mix_offset = 0
+        self._mix_rate = 8000
 
     # ── Backend API ─────────────────────────────────────────────
 
@@ -409,55 +406,69 @@ class CallHandler:
             log.info(f"API returned {len(segs)} segments")
             return data
 
-    # ── MixMonitor background audio capture ─────────────────────
+    # ── Monitor background audio capture ─────────────────────────
 
     async def _start_mixmonitor(self):
-        """Start MixMonitor to capture caller audio in the background."""
-        self._mix_id = await self.ami.start_mixmonitor(
+        """Start AMI Monitor to capture caller audio in the background."""
+        self._mix_id = await self.ami.start_monitor(
             self.channel_id, self._mix_path
         )
         self._mix_active = True
-        # Give MixMonitor a moment to start writing
+        # Give Monitor a moment to start writing
         await asyncio.sleep(0.3)
-        if os.path.exists(self._mix_path):
-            log.info(f"MixMonitor file exists: {self._mix_path} "
-                     f"({os.path.getsize(self._mix_path)} bytes)")
+        wav_path = self._mix_path + ".wav"
+        if os.path.exists(wav_path):
+            log.info(f"Monitor file exists: {wav_path} "
+                     f"({os.path.getsize(wav_path)} bytes)")
         else:
-            log.warning(f"MixMonitor file NOT found: {self._mix_path}")
+            log.warning(f"Monitor file NOT found: {wav_path}")
 
     async def _stop_mixmonitor(self):
-        """Stop MixMonitor."""
+        """Stop Monitor."""
         self._mix_active = False
-        await self.ami.stop_mixmonitor(self.channel_id, self._mix_id)
+        await self.ami.stop_monitor(self.channel_id)
         self._mix_id = None
 
     def _read_mixmonitor_chunk(self):
-        """Read new audio bytes from the MixMonitor file since last read.
+        """Read new audio samples from the Monitor WAV file since last read.
 
-        Returns float32 samples (8kHz) or None if no new data.
-        MixMonitor with 'ri' option writes raw signed 16-bit mono PCM
-        of the caller's audio only (read/input direction).
+        Returns float32 samples (native rate) or None if no new data.
+        AMI Monitor with 'rwav' format writes WAV of caller audio only.
         """
         try:
-            if not os.path.exists(self._mix_path):
+            wav_path = self._mix_path + ".wav"
+            if not os.path.exists(wav_path):
                 return None
-            size = os.path.getsize(self._mix_path)
+            size = os.path.getsize(wav_path)
             if size <= self._mix_offset:
                 return None
-            with open(self._mix_path, "rb") as f:
-                f.seek(self._mix_offset)
-                data = f.read()
+            # Read WAV via wave module (handles header properly)
+            with _wave.open(wav_path, "rb") as wf:
+                n_frames = wf.getnframes()
+                sw = wf.getsampwidth()
+                n_ch = wf.getnchannels()
+                self._mix_rate = wf.getframerate()
+                # WAV data starts after header; byte offset includes header.
+                # Standard WAV header = 44 bytes.
+                hdr = 44
+                prev_data = max(0, self._mix_offset - hdr)
+                frame_off = prev_data // (sw * n_ch)
+                if frame_off >= n_frames:
+                    self._mix_offset = size
+                    return None
+                wf.setpos(frame_off)
+                data = wf.readframes(n_frames - frame_off)
             self._mix_offset = size
-            if len(data) < 160:  # < 10ms at 8kHz 16-bit
+            if len(data) < 160:
                 return None
             samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             return samples
         except Exception as e:
-            log.warning(f"MixMonitor read error: {e}")
+            log.warning(f"Monitor read error: {e}")
             return None
 
     def _check_bargein_mixmonitor(self, min_speech_ms: int = 100) -> bool:
-        """Check the MixMonitor file for caller speech (non-blocking).
+        """Check the Monitor file for caller speech (non-blocking).
 
         Called RIGHT AFTER a playback segment finishes, so the bot is
         silent — any audio in the file must be from the caller.
@@ -466,10 +477,11 @@ class CallHandler:
         if samples is None or len(samples) == 0:
             return False
 
+        rate = self._mix_rate or 8000
         rms = float(np.sqrt(np.mean(samples ** 2)))
-        duration_ms = len(samples) / 8000 * 1000
+        duration_ms = len(samples) / rate * 1000
         log.info(
-            f"BARGEIN-CHK: {len(samples)} samples ({duration_ms:.0f}ms) rms={rms:.5f}"
+            f"BARGEIN-CHK: {len(samples)} samples ({duration_ms:.0f}ms @{rate}Hz) rms={rms:.5f}"
         )
         # Quick energy gate: skip if too quiet
         if rms < 0.005:
@@ -478,22 +490,25 @@ class CallHandler:
 
         # Save the chunk for STT if barge-in confirmed
         self._last_bargein_samples = samples
+        self._last_bargein_rate = rate
 
         # Run Silero VAD
         _load_silero()
         if _silero_model is None or _silero_model is False:
             active = int(np.sum(np.abs(samples) > 0.005))
-            active_ms = active / 8000 * 1000
+            active_ms = active / rate * 1000
             return active_ms >= min_speech_ms
 
         try:
             import torch
-            if len(samples) < 800:  # < 100ms
-                log.info(f"BARGEIN-CHK: skipped (chunk too short: {len(samples)} < 800)")
+            min_samples = int(rate * min_speech_ms / 1000)
+            if len(samples) < min_samples:
+                log.info(f"BARGEIN-CHK: skipped (chunk too short: {len(samples)} < {min_samples})")
                 return False
             # Resample to 16kHz for Silero
             from scipy.signal import resample_poly
-            samples_16k = resample_poly(samples, 2, 1).astype(np.float32)
+            g = int(np.gcd(16000, rate))
+            samples_16k = resample_poly(samples, 16000 // g, rate // g).astype(np.float32)
             tensor = torch.from_numpy(samples_16k)
             speech_ts = _silero_utils(
                 tensor, _silero_model,
@@ -512,7 +527,7 @@ class CallHandler:
             log.warning(f"Silero error in barge-in check: {e}")
             # RMS fallback
             active = int(np.sum(np.abs(samples) > 0.005))
-            active_ms = active / 8000 * 1000
+            active_ms = active / rate * 1000
             return active_ms >= min_speech_ms
 
         return False
@@ -520,6 +535,7 @@ class CallHandler:
     def _save_bargein_audio(self):
         """Save the barge-in audio chunk as a WAV file for STT."""
         samples = getattr(self, "_last_bargein_samples", None)
+        rate = getattr(self, "_last_bargein_rate", 8000)
         if samples is None or len(samples) == 0:
             return None
         out = f"{RECORD_DIR}/{self.call_id}_bargein.wav"
@@ -527,7 +543,7 @@ class CallHandler:
         with _wave.open(out, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
-            wf.setframerate(8000)
+            wf.setframerate(rate)
             wf.writeframes(pcm)
         log.info(f"Bargein audio saved: {out} ({os.path.getsize(out)} bytes)")
         return out
@@ -640,8 +656,9 @@ class CallHandler:
         # Discards stale audio from greeting / previous segments.
         if check_bargein and self._mix_active:
             try:
-                if os.path.exists(self._mix_path):
-                    self._mix_offset = os.path.getsize(self._mix_path)
+                wav_path = self._mix_path + ".wav"
+                if os.path.exists(wav_path):
+                    self._mix_offset = os.path.getsize(wav_path)
                     log.info(f"BARGEIN: offset reset to {self._mix_offset}")
             except Exception:
                 pass
