@@ -41,7 +41,7 @@ AMI_USER = "voicebot"
 AMI_SECRET = "voicebot_secret"
 
 RECORD_DIR = "/var/spool/asterisk/recording"
-PLAYBACK_DIR = "/var/lib/asterisk/sounds/voicebot"
+PLAYBACK_DIR = "/usr/share/asterisk/sounds/voicebot"
 LOG_FILE = "/var/log/voicebot_ari.log"
 
 os.makedirs(RECORD_DIR, exist_ok=True)
@@ -155,13 +155,15 @@ class AMIClient:
 
     async def _read_response(self) -> str:
         data = b""
-        while True:
+        deadline = time.time() + 10
+        while time.time() < deadline:
             chunk = await asyncio.wait_for(self._reader.read(4096),
                                            timeout=10)
             if not chunk:
                 break
             data += chunk
-            if b"\r\n\r\n" in data:
+            decoded = data.decode(errors="replace")
+            if "Response:" in decoded:
                 break
         decoded = data.decode(errors="replace")
         log.debug(f"AMI response: {decoded[:300]}")
@@ -648,6 +650,20 @@ async def main():
         os.remove(test_path)
     except Exception as e:
         log.error(f"Cannot write to PLAYBACK_DIR {PLAYBACK_DIR}: {e}")
+        # Fallback: try the other common path
+        fallback = "/var/lib/asterisk/sounds/voicebot"
+        try:
+            os.makedirs(fallback, exist_ok=True)
+            test2 = f"{fallback}/_probe.wav"
+            with _wave.open(test2, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(8000)
+                wf.writeframes(b"\x00\x00" * 800)
+            log.info(f"Fallback probe OK: {test2}")
+            os.remove(test2)
+        except Exception as e2:
+            log.error(f"Fallback also failed: {e2}")
 
     async with ARIClient() as ari, AMIClient() as ami:
         # Verify ARI connectivity (any HTTP response = ARI is up)
