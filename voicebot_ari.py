@@ -649,25 +649,15 @@ class CallHandler:
         """Play all segments; return (interrupted_text, recording_path).
 
         When check_bargein is True, after each segment finishes (bot is
-        silent), we read the MixMonitor file and run Silero VAD. If the
-        caller spoke → barge-in detected, stop playing remaining segments.
+        silent), we do a very short ARI recording (200-300ms) to capture
+        any caller speech. If the caller spoke → barge-in detected.
 
-        MixMonitor captures caller audio in the background without blocking
-        the channel, so there are zero gaps between segments.
+        Trade-off: ~200ms gap between segments (vs zero gaps with
+        MixMonitor). But this is the ONLY reliable approach since
+        MixMonitor AMI options are not parsed correctly in Asterisk 20.6.
         """
         interrupted_text = None
         bargein_recording = None
-
-        # Reset offset so we only read audio captured from NOW forward.
-        # Discards stale audio from greeting / previous segments.
-        if check_bargein and self._mix_active:
-            try:
-                raw_path = self._mix_path + ".raw"
-                if os.path.exists(raw_path):
-                    self._mix_offset = os.path.getsize(raw_path)
-                    log.info(f"BARGEIN: offset reset to {self._mix_offset}")
-            except Exception:
-                pass
 
         for i, seg in enumerate(segments):
             ok, text, pb_id = await self._play_segment(seg, i)
@@ -678,34 +668,28 @@ class CallHandler:
 
             interrupted_text = text
 
-            # Barge-in check: read MixMonitor file (bot just went silent)
-            if check_bargein and self._mix_active:
-                # Small delay for audio to flush to disk
-                await asyncio.sleep(0.1)
-                if self._check_bargein_mixmonitor(min_speech_ms=100):
-                    log.info(
-                        f"BARGE-IN after seg {i}/{len(segments)-1}: "
-                        f"[{text[:60]}]"
-                    )
-                    # Cancel remaining segments
-                    if pb_id is not None:
-                        await self.ari.stop_playback(pb_id)
-                    bargein_recording = self._save_bargein_audio()
-                    # Clean up remaining segment files
-                    for j in range(i + 1, len(segments)):
-                        _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav")
-                    break
-
-        # If no barge-in and MixMonitor available, check after last segment
-        # (caller may speak during/after the very last segment)
-        if (check_bargein and bargein_recording is None
-                and self._mix_active):
-            await asyncio.sleep(0.1)
-            if self._check_bargein_mixmonitor(min_speech_ms=150):
-                log.info(
-                    f"BARGE-IN after last seg: [{interrupted_text[:60]}]"
+            # Barge-in check: short ARI recording (bot just went silent)
+            if check_bargein:
+                rec_path = await self._record_check(
+                    max_dur=0.3, max_sil=0.15
                 )
-                bargein_recording = self._save_bargein_audio()
+                if rec_path and os.path.exists(rec_path):
+                    # Check if recording has speech
+                    has_speech = _check_speech_silero(rec_path)
+                    if has_speech:
+                        log.info(
+                            f"BARGE-IN after seg {i}/{len(segments)-1}: "
+                            f"[{text[:60]}]"
+                        )
+                        bargein_recording = rec_path
+                        # Clean up remaining segment files
+                        for j in range(i + 1, len(segments)):
+                            _cleanup(
+                                f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav"
+                            )
+                        break
+                    else:
+                        _cleanup(rec_path)
 
         return interrupted_text, bargein_recording
 
