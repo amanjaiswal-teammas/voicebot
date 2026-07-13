@@ -3,13 +3,16 @@
 ARI-based voicebot handler with MixMonitor + Silero VAD barge-in.
 
 MixMonitor (via AMI) captures caller-only audio in the background using
-Options 'r,i' (raw format + input/read-only direction). After each TTS
+Options 'b|r' (b=read-only direction + r=raw format). After each TTS
 segment finishes, we read the captured audio and run Silero VAD. If the
 caller spoke → stop playback, process their speech.
 
-IMPORTANT: MixMonitor options MUST be comma-separated ('r,i' not 'ri').
-Without comma separation, Asterisk only parses the first option ('r'),
-which captures mixed (both directions) audio — causing false positives.
+IMPORTANT: Asterisk MixMonitor options use PIPE separator (|), not comma.
+  ast_app_parse_options() splits on '|'.
+  b = read audio only (caller → Asterisk)
+  r = raw PCM format (slinear 16-bit LE)
+  WRONG: 'ri' or 'r,i' → no match → mixed audio (both directions)
+  CORRECT: 'b|r' → caller-only raw PCM
 
 Required: pip install aiohttp numpy silero-vad onnxruntime scipy
 
@@ -324,8 +327,11 @@ class AMIClient:
     async def start_mixmonitor(self, channel_id: str, filepath: str):
         """Start AMI MixMonitor capturing caller-only audio (read direction).
 
-        Options 'r,i' = comma-separated: r (raw format) + i (input/read only).
-        Asterisk requires comma separation — 'ri' only parses 'r'.
+        Options use PIPE separator (not comma): ast_app_parse_options splits on '|'.
+          b = read audio only (caller → Asterisk direction)
+          r = raw PCM format (slinear 16-bit LE)
+        WRONG: 'ri' or 'r,i' → parsed as single token → no match → mixed audio.
+        CORRECT: 'b|r' → b=read-only, r=raw → caller-only raw PCM.
         """
         if not self._connected:
             return None
@@ -334,7 +340,7 @@ class AMIClient:
                 f"Action: MixMonitor\r\n"
                 f"Channel: {channel_id}\r\n"
                 f"File: {filepath}\r\n"
-                f"Options: r,i\r\n"
+                f"Options: b|r\r\n"
                 f"Replace: yes\r\n\r\n"
             )
             await self._send(cmd)
@@ -465,7 +471,7 @@ class CallHandler:
 
         Called RIGHT AFTER a playback segment finishes, so the bot is
         silent — any audio in the file must be from the caller.
-        MixMonitor Options 'r,i' captures only the read (caller) direction.
+        MixMonitor Options 'b|r' captures only the read (caller) direction.
         """
         samples = self._read_mixmonitor_chunk()
         if samples is None or len(samples) == 0:
