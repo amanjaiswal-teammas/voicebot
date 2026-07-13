@@ -57,7 +57,7 @@ try:
 except Exception:
     pass
 
-VAD_RMS_THRESHOLD = 0.008    # minimum RMS (0-1) to trigger barge-in
+VAD_RMS_THRESHOLD = 0.002    # minimum RMS (0-1) to trigger barge-in
 VAD_POLL_MS = 50             # how often to check MixMonitor file
 VAD_WINDOW_MS = 150          # audio window for each RMS check
 VAD_MIN_SPEECH_MS = 200      # minimum sustained speech before barge-in fires
@@ -114,9 +114,9 @@ def _find_wav_data_offset(f) -> tuple:
             if chunk_id == b"fmt ":
                 fmt_data = f.read(min(chunk_size, 16))
                 if len(fmt_data) >= 16:
-                    sw = struct.unpack_from("<H", fmt_data, 2)[0]
-                    sw = sw // 8  # bits → bytes
                     rate = struct.unpack_from("<I", fmt_data, 4)[0]
+                    sw = struct.unpack_from("<H", fmt_data, 14)[0]
+                    sw = sw // 8  # bits → bytes
                 # Seek to end of chunk (pad to even boundary)
                 f.seek(chunk_data_start + chunk_size + (chunk_size & 1))
                 continue
@@ -132,21 +132,40 @@ def _find_wav_data_offset(f) -> tuple:
 def _tail_rms(wav_path: str, window_ms: int = 150) -> float:
     """Read raw PCM from the trailing tail of a WAV file.
 
-    For in-progress files (written by MixMonitor), the WAV header's
-    nframes field is stale (0) until the file is closed.  We parse the
-    RIFF chunks to find the actual data offset, then read raw bytes
-    from the end of the file.
+    Primary path: wave.open() for well-formed WAVs (caller recordings).
+    Fallback: raw RIFF-chunk parsing for in-progress MixMonitor files
+    where nframes is stale (0) until close.
     """
     try:
         fsize = os.path.getsize(wav_path)
         if fsize < 48:
             return 0.0
 
+        # Primary: use wave.open() — works for completed recordings
+        try:
+            import wave
+            with wave.open(wav_path, "rb") as w:
+                nframes = w.getnframes()
+                rate = w.getframerate()
+                sw = w.getsampwidth()
+                if rate > 0 and sw > 0 and nframes > 0:
+                    total_bytes = nframes * sw
+                    bytes_per_sec = rate * sw
+                    want_bytes = int(bytes_per_sec * window_ms / 1000)
+                    want_bytes = min(want_bytes, total_bytes)
+                    if want_bytes < sw:
+                        return 0.0
+                    w.setpos(max(0, nframes - want_bytes // sw))
+                    raw = w.readframes(want_bytes // sw)
+                    return _pcm_rms(raw, sw)
+        except Exception:
+            pass
+
+        # Fallback: raw RIFF-chunk parsing for in-progress files
         data_offset = 44
         rate = 8000
         sw = 2
 
-        # Parse WAV header to get real data_offset, rate, sw
         try:
             with open(wav_path, "rb") as f:
                 data_offset, rate, sw = _find_wav_data_offset(f)
@@ -230,12 +249,12 @@ class AMIClient:
         message whose first line starts with 'Response:'.
         """
         buf = b""
-        deadline = time.time() + 10
+        deadline = time.time() + 3
         while time.time() < deadline:
             try:
                 remaining = deadline - time.time()
                 chunk = await asyncio.wait_for(
-                    self._reader.read(8192), timeout=min(remaining, 5)
+                    self._reader.read(8192), timeout=min(remaining, 2)
                 )
             except (asyncio.TimeoutError, TimeoutError):
                 break
@@ -445,7 +464,7 @@ class CallHandler:
                 continue
 
             # Adaptive threshold: baseline + offset, min VAD_RMS_THRESHOLD
-            adaptive_threshold = max(baseline_rms + 0.005, VAD_RMS_THRESHOLD)
+            adaptive_threshold = max(baseline_rms + 0.001, VAD_RMS_THRESHOLD)
             if rms > adaptive_threshold:
                 speech_ms += VAD_POLL_MS
                 if speech_ms >= VAD_MIN_SPEECH_MS:
@@ -525,33 +544,9 @@ class CallHandler:
         self._bargein.clear()
         self._cancel_vad = False
         vad_task = None
-        await asyncio.sleep(0.1)
-        if os.path.exists(self._mixmon_path):
-            size_before = os.path.getsize(self._mixmon_path)
-            await asyncio.sleep(0.3)
-            size_after = os.path.getsize(self._mixmon_path) if os.path.exists(self._mixmon_path) else 0
-            log.info(f"Seg {idx} MixMonitor file: {size_before}→{size_after} bytes "
-                     f"(mix_ok={mix_ok})")
-            if size_after <= 44:
-                log.warning(f"Seg {idx} MixMonitor file NOT growing! "
-                            f"Attempting restart...")
-                await self._safe_mixmonitor_stop()
-                await asyncio.sleep(0.05)
-                try:
-                    resp2 = await self.ami.mixmonitor_start(
-                        self.channel_id, self._mixmon_path
-                    )
-                    ok2 = "Success" in resp2
-                    log.info(f"Seg {idx} MixMonitor restart: ok={ok2} resp={resp2[:150]}")
-                except Exception as e2:
-                    log.warning(f"Seg {idx} MixMonitor restart failed: {e2}")
-                await asyncio.sleep(0.3)
-                size_after2 = os.path.getsize(self._mixmon_path) if os.path.exists(self._mixmon_path) else 0
-                log.info(f"Seg {idx} After restart: {size_after2} bytes")
-            vad_task = asyncio.create_task(self._poll_vad())
-            log.info(f"Seg {idx} VAD started (mixmon file exists)")
-        else:
-            log.info(f"Seg {idx} VAD skipped (no mixmon file yet)")
+        await asyncio.sleep(0.05)
+        vad_task = asyncio.create_task(self._poll_vad())
+        log.info(f"Seg {idx} VAD started (mix_ok={mix_ok})")
 
         # Start ARI playback
         pb_id = f"pb_{seg_name}"
