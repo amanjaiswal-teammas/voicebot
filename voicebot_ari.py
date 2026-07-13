@@ -416,11 +416,18 @@ class CallHandler:
         self._mix_id = await self.ami.start_mixmonitor(
             self.channel_id, self._mix_path
         )
+        self._mix_active = True
         # Give MixMonitor a moment to start writing
         await asyncio.sleep(0.3)
+        if os.path.exists(self._mix_path):
+            log.info(f"MixMonitor file exists: {self._mix_path} "
+                     f"({os.path.getsize(self._mix_path)} bytes)")
+        else:
+            log.warning(f"MixMonitor file NOT found: {self._mix_path}")
 
     async def _stop_mixmonitor(self):
         """Stop MixMonitor."""
+        self._mix_active = False
         await self.ami.stop_mixmonitor(self.channel_id, self._mix_id)
         self._mix_id = None
 
@@ -459,8 +466,13 @@ class CallHandler:
             return False
 
         rms = float(np.sqrt(np.mean(samples ** 2)))
+        duration_ms = len(samples) / 8000 * 1000
+        log.info(
+            f"BARGEIN-CHK: {len(samples)} samples ({duration_ms:.0f}ms) rms={rms:.5f}"
+        )
         # Quick energy gate: skip if too quiet
         if rms < 0.005:
+            log.info(f"BARGEIN-CHK: skipped (rms={rms:.5f} < 0.005)")
             return False
 
         # Save the chunk for STT if barge-in confirmed
@@ -476,6 +488,7 @@ class CallHandler:
         try:
             import torch
             if len(samples) < 800:  # < 100ms
+                log.info(f"BARGEIN-CHK: skipped (chunk too short: {len(samples)} < 800)")
                 return False
             # Resample to 16kHz for Silero
             from scipy.signal import resample_poly
@@ -492,6 +505,8 @@ class CallHandler:
             if total_ms >= min_speech_ms:
                 log.info(f"BARGE-IN VAD: speech_ms={total_ms} rms={rms:.4f}")
                 return True
+            else:
+                log.info(f"BARGEIN-CHK: VAD no speech (ms={total_ms} < {min_speech_ms}) rms={rms:.5f}")
         except Exception as e:
             log.warning(f"Silero error in barge-in check: {e}")
             # RMS fallback
@@ -630,7 +645,7 @@ class CallHandler:
             interrupted_text = text
 
             # Barge-in check: read MixMonitor file (bot just went silent)
-            if check_bargein and self._mix_id is not None:
+            if check_bargein and self._mix_active:
                 # Small delay for audio to flush to disk
                 await asyncio.sleep(0.1)
                 if self._check_bargein_mixmonitor(min_speech_ms=100):
@@ -650,7 +665,7 @@ class CallHandler:
         # If no barge-in and MixMonitor available, check after last segment
         # (caller may speak during/after the very last segment)
         if (check_bargein and bargein_recording is None
-                and self._mix_id is not None):
+                and self._mix_active):
             await asyncio.sleep(0.1)
             if self._check_bargein_mixmonitor(min_speech_ms=150):
                 log.info(
