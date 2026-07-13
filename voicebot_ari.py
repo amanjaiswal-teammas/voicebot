@@ -16,6 +16,7 @@ Asterisk config changes (see ari_setup/):
 
 import asyncio
 import aiohttp
+import audioop
 import json
 import base64
 import os
@@ -23,6 +24,7 @@ import sys
 import time
 import uuid
 import struct
+import wave as _wave
 import numpy as np
 import logging
 from pathlib import Path
@@ -161,7 +163,9 @@ class AMIClient:
             data += chunk
             if b"\r\n\r\n" in data:
                 break
-        return data.decode(errors="replace")
+        decoded = data.decode(errors="replace")
+        log.debug(f"AMI response: {decoded[:300]}")
+        return decoded
 
     async def action(self, action: str, **params) -> str:
         async with self._lock:
@@ -304,8 +308,12 @@ class CallHandler:
             form.add_field("outbound", "true")
         async with self._http.post(url, data=form) as r:
             if r.status != 200:
+                log.warning(f"API {r.status} for {url}")
                 return None
-            return await r.json()
+            data = await r.json()
+            segs = data.get("segments", [])
+            log.info(f"API returned {len(segs)} segments")
+            return data
 
     # ── VAD background task ─────────────────────────────────────
 
@@ -360,13 +368,24 @@ class CallHandler:
         audio_b64 = seg_data["audio"]
 
         seg_name = f"{self.call_id}_seg_{idx}"
-        seg_path = f"{PLAYBACK_DIR}/{seg_name}.ulaw"
-        with open(seg_path, "wb") as f:
-            f.write(base64.b64decode(audio_b64))
+        seg_path = f"{PLAYBACK_DIR}/{seg_name}.wav"
+
+        # Convert ulaw → WAV for universal Asterisk compatibility
+        ulaw_raw = base64.b64decode(audio_b64)
+        pcm = audioop.ulaw2lin(ulaw_raw, 2)
+        with _wave.open(seg_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(pcm)
         try:
             os.chmod(seg_path, 0o644)
         except Exception:
             pass
+        log.info(f"Seg {idx} written: {seg_path} ({os.path.getsize(seg_path)} bytes)")
+
+        # Brief pause to ensure file is flushed to disk before Asterisk reads it
+        await asyncio.sleep(0.05)
 
         # Start MixMonitor (try with b option for caller-only audio)
         self._mixmon_path = f"{RECORD_DIR}/{seg_name}_mix.wav"
@@ -375,7 +394,8 @@ class CallHandler:
             resp = await self.ami.mixmonitor_start(
                 self.channel_id, self._mixmon_path
             )
-            mix_ok = "Success" in resp
+            mix_ok = "Success" in resp or "success" in resp.lower()
+            log.info(f"MixMonitor resp: {resp[:200]} mix_ok={mix_ok}")
         except Exception as e:
             log.warning(f"MixMonitor start failed: {e}")
 
@@ -390,16 +410,21 @@ class CallHandler:
 
         # Start ARI playback
         pb_id = f"pb_{seg_name}"
+        media_uri = f"sound:voicebot/{seg_name}"
+        log.info(f"Seg {idx} play: uri={media_uri} channel={self.channel_id}")
         pb = await self.ari.play(
-            self.channel_id, f"sound:voicebot/{seg_name}", pb_id
+            self.channel_id, media_uri, pb_id
         )
         if pb is None:
+            log.warning(f"Seg {idx} play POST returned None")
             self._cancel_vad = True
             if mix_ok:
                 await self.ami.mixmonitor_stop(self.channel_id)
             _cleanup(seg_path)
             _cleanup(self._mixmon_path)
             return True, None
+
+        log.info(f"Seg {idx} play POST ok: {pb}")
 
         # If MixMonitor failed, fall back: wait for playback without VAD
         if not mix_ok:
@@ -441,9 +466,13 @@ class CallHandler:
 
     async def _wait_playback(self, pb_id: str):
         """Poll until playback completes or fails."""
+        checks = 0
         while True:
             await asyncio.sleep(0.1)
             state = await self.ari.playback_state(pb_id)
+            checks += 1
+            if checks <= 3 or checks % 10 == 0:
+                log.info(f"Playback {pb_id}: state={state} check={checks}")
             if state in ("done", "failed", None):
                 return
 
@@ -605,6 +634,20 @@ async def main():
     log.info("═" * 50)
     log.info("Starting voicebot ARI handler")
     log.info("═" * 50)
+
+    # Diagnostic: verify playback directory and write a test file
+    test_path = f"{PLAYBACK_DIR}/_probe.wav"
+    try:
+        with _wave.open(test_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(b"\x00\x00" * 800)  # 100ms silence
+        sz = os.path.getsize(test_path)
+        log.info(f"Probe file written: {test_path} ({sz} bytes)")
+        os.remove(test_path)
+    except Exception as e:
+        log.error(f"Cannot write to PLAYBACK_DIR {PLAYBACK_DIR}: {e}")
 
     async with ARIClient() as ari, AMIClient() as ami:
         # Verify ARI connectivity (any HTTP response = ARI is up)
