@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-ARI-based voicebot handler with Silero VAD barge-in.
+ARI-based voicebot handler with MixMonitor + Silero VAD barge-in.
 
-Plays TTS segments, then does a short ARI recording between segments.
-Silero VAD checks the recording for customer speech.
-If speech detected → barge-in, use that recording for STT.
+MixMonitor captures caller audio in the background (no channel blocking).
+After each TTS segment finishes, we read the captured audio and run Silero
+VAD. If the caller spoke → stop playback, process their speech.
 
-Required: pip install aiohttp numpy silero-vad onnxruntime
+Required: pip install aiohttp numpy silero-vad onnxruntime scipy
 
 Asterisk config changes (see ari_setup/):
   http.conf     -> enable HTTP server on port 8088
   ari.conf      -> create 'voicebot' user with read=all write=all
   extensions.conf -> route calls to Stasis(voicebot)
+  manager.conf  -> enable AMI on port 5038 for MixMonitor
 """
 
 import asyncio
@@ -251,6 +252,115 @@ class ARIClient:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  AMI client (for MixMonitor background audio capture)
+# ═══════════════════════════════════════════════════════════════════════
+
+AMI_HOST = "127.0.0.1"
+AMI_PORT = 5038
+AMI_USER = "voicebot"
+AMI_PASS = "voicebot_secret"
+
+
+class AMIClient:
+    """Async AMI client — just enough to start/stop MixMonitor."""
+
+    def __init__(self):
+        self._reader = None
+        self._writer = None
+        self._connected = False
+        self._lock = asyncio.Lock()
+
+    async def connect(self):
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(AMI_HOST, AMI_PORT), timeout=5
+            )
+            # Read welcome banner
+            await self._read_until(b"\r\n\r\n")
+            # Login
+            await self._send(
+                f"Action: Login\r\n"
+                f"Username: {AMI_USER}\r\n"
+                f"Secret: {AMI_PASS}\r\n"
+                f"Events: off\r\n\r\n"
+            )
+            resp = await self._read_until(b"\r\n\r\n")
+            if b"Success" in resp:
+                self._connected = True
+                log.info("AMI connected")
+            else:
+                log.warning(f"AMI login failed: {resp[:200]}")
+        except Exception as e:
+            log.warning(f"AMI connection failed: {e}")
+
+    async def _send(self, data: str):
+        if not self._writer:
+            return
+        self._writer.write(data.encode())
+        await self._writer.drain()
+
+    async def _read_until(self, marker: bytes, timeout: float = 3) -> bytes:
+        if not self._reader:
+            return b""
+        data = b""
+        try:
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                chunk = await asyncio.wait_for(
+                    self._reader.read(4096), timeout=timeout
+                )
+                if not chunk:
+                    break
+                data += chunk
+                if marker in data:
+                    break
+        except (asyncio.TimeoutError, Exception):
+            pass
+        return data
+
+    async def start_mixmonitor(self, channel_id: str, filepath: str):
+        """Start MixMonitor capturing caller audio (read direction) to file."""
+        if not self._connected:
+            return None
+        async with self._lock:
+            cmd = (
+                f"Action: MixMonitor\r\n"
+                f"Channel: {channel_id}\r\n"
+                f"File: {filepath}\r\n"
+                f"Options: r\r\n\r\n"
+            )
+            await self._send(cmd)
+            resp = await self._read_until(b"\r\n\r\n")
+            # Extract MixMonitorID if present
+            mid = None
+            for line in resp.decode(errors="replace").split("\r\n"):
+                if line.startswith("MixMonitorID:"):
+                    mid = line.split(":", 1)[1].strip()
+            log.info(f"MixMonitor started: {filepath} id={mid}")
+            return mid
+
+    async def stop_mixmonitor(self, channel_id: str, mid: str = None):
+        """Stop MixMonitor on the channel."""
+        if not self._connected:
+            return
+        async with self._lock:
+            cmd = f"Action: StopMixMonitor\r\nChannel: {channel_id}\r\n"
+            if mid:
+                cmd += f"MixMonitorID: {mid}\r\n"
+            cmd += "\r\n"
+            await self._send(cmd)
+            await self._read_until(b"\r\n\r\n", timeout=1)
+
+    async def close(self):
+        try:
+            if self._writer:
+                self._writer.close()
+        except Exception:
+            pass
+        self._connected = False
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  Call handler
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -265,12 +375,17 @@ def _cleanup(path: str):
 class CallHandler:
     """Manages the conversation loop for a single call."""
 
-    def __init__(self, ari: ARIClient, channel_id: str, args: list):
+    def __init__(self, ari: ARIClient, channel_id: str, args: list,
+                 ami: AMIClient):
         self.ari = ari
+        self.ami = ami
         self.channel_id = channel_id
         self.args = args
         self.call_id = str(uuid.uuid4())
         self._http: aiohttp.ClientSession = None
+        self._mix_id = None
+        self._mix_path = f"/tmp/{self.call_id}_caller.raw"
+        self._mix_offset = 0
 
     # ── Backend API ─────────────────────────────────────────────
 
@@ -293,6 +408,113 @@ class CallHandler:
             segs = data.get("segments", [])
             log.info(f"API returned {len(segs)} segments")
             return data
+
+    # ── MixMonitor background audio capture ─────────────────────
+
+    async def _start_mixmonitor(self):
+        """Start MixMonitor to capture caller audio in the background."""
+        self._mix_id = await self.ami.start_mixmonitor(
+            self.channel_id, self._mix_path
+        )
+        # Give MixMonitor a moment to start writing
+        await asyncio.sleep(0.3)
+
+    async def _stop_mixmonitor(self):
+        """Stop MixMonitor."""
+        await self.ami.stop_mixmonitor(self.channel_id, self._mix_id)
+        self._mix_id = None
+
+    def _read_mixmonitor_chunk(self):
+        """Read new audio bytes from the MixMonitor file since last read.
+
+        Returns float32 samples (8kHz) or None if no new data.
+        MixMonitor with 'r' option writes raw signed 16-bit mono PCM.
+        """
+        try:
+            if not os.path.exists(self._mix_path):
+                return None
+            size = os.path.getsize(self._mix_path)
+            if size <= self._mix_offset:
+                return None
+            with open(self._mix_path, "rb") as f:
+                f.seek(self._mix_offset)
+                data = f.read()
+            self._mix_offset = size
+            if len(data) < 160:  # < 10ms at 8kHz 16-bit
+                return None
+            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            return samples
+        except Exception as e:
+            log.warning(f"MixMonitor read error: {e}")
+            return None
+
+    def _check_bargein_mixmonitor(self, min_speech_ms: int = 100) -> bool:
+        """Check the MixMonitor file for caller speech (non-blocking).
+
+        Called RIGHT AFTER a playback segment finishes, so the bot is
+        silent — any audio in the file must be from the caller.
+        """
+        samples = self._read_mixmonitor_chunk()
+        if samples is None or len(samples) == 0:
+            return False
+
+        rms = float(np.sqrt(np.mean(samples ** 2)))
+        # Quick energy gate: skip if too quiet
+        if rms < 0.005:
+            return False
+
+        # Save the chunk for STT if barge-in confirmed
+        self._last_bargein_samples = samples
+
+        # Run Silero VAD
+        _load_silero()
+        if _silero_model is None or _silero_model is False:
+            active = int(np.sum(np.abs(samples) > 0.005))
+            active_ms = active / 8000 * 1000
+            return active_ms >= min_speech_ms
+
+        try:
+            import torch
+            if len(samples) < 800:  # < 100ms
+                return False
+            # Resample to 16kHz for Silero
+            from scipy.signal import resample_poly
+            samples_16k = resample_poly(samples, 2, 1).astype(np.float32)
+            tensor = torch.from_numpy(samples_16k)
+            speech_ts = _silero_utils(
+                tensor, _silero_model,
+                sampling_rate=16000,
+                threshold=0.4,
+                min_speech_duration_ms=80,
+                min_silence_duration_ms=50,
+            )
+            total_ms = sum(s["end"] - s["start"] for s in speech_ts) * 1000 // 16000
+            if total_ms >= min_speech_ms:
+                log.info(f"BARGE-IN VAD: speech_ms={total_ms} rms={rms:.4f}")
+                return True
+        except Exception as e:
+            log.warning(f"Silero error in barge-in check: {e}")
+            # RMS fallback
+            active = int(np.sum(np.abs(samples) > 0.005))
+            active_ms = active / 8000 * 1000
+            return active_ms >= min_speech_ms
+
+        return False
+
+    def _save_bargein_audio(self):
+        """Save the barge-in audio chunk as a WAV file for STT."""
+        samples = getattr(self, "_last_bargein_samples", None)
+        if samples is None or len(samples) == 0:
+            return None
+        out = f"{RECORD_DIR}/{self.call_id}_bargein.wav"
+        pcm = (samples * 32768).astype(np.int16).tobytes()
+        with _wave.open(out, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(pcm)
+        log.info(f"Bargein audio saved: {out} ({os.path.getsize(out)} bytes)")
+        return out
 
     # ── Play one segment ────────────────────────────────────────
 
@@ -383,42 +605,58 @@ class CallHandler:
         log.info(f"Record check: {out} ({len(raw)} bytes)")
         return out
 
-    # ── Play all segments with between-segment barge-in check ───
+    # ── Play all segments with real-time barge-in detection ──────
 
     async def play_segments(self, segments: list, check_bargein: bool = True):
         """Play all segments; return (interrupted_text, recording_path).
 
-        If check_bargein is True, a short recording between segments detects
-        customer speech (barge-in). If False, plays all segments back-to-back
-        with no gaps (used for greeting).
+        When check_bargein is True, after each segment finishes (bot is
+        silent), we read the MixMonitor file and run Silero VAD. If the
+        caller spoke → barge-in detected, stop playing remaining segments.
+
+        MixMonitor captures caller audio in the background without blocking
+        the channel, so there are zero gaps between segments.
         """
         interrupted_text = None
         bargein_recording = None
 
         for i, seg in enumerate(segments):
             ok, text, pb_id = await self._play_segment(seg, i)
-            if pb_id is None:
-                continue
 
-            await self._wait_playback(pb_id)
+            if pb_id is not None:
+                await self._wait_playback(pb_id)
             _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{i}.wav")
 
-            if i == len(segments) - 1:
-                interrupted_text = text
-                break
+            interrupted_text = text
 
-            if not check_bargein:
-                continue
+            # Barge-in check: read MixMonitor file (bot just went silent)
+            if check_bargein and self._mix_id is not None:
+                # Small delay for audio to flush to disk
+                await asyncio.sleep(0.1)
+                if self._check_bargein_mixmonitor(min_speech_ms=100):
+                    log.info(
+                        f"BARGE-IN after seg {i}/{len(segments)-1}: "
+                        f"[{text[:60]}]"
+                    )
+                    # Cancel remaining segments
+                    if pb_id is not None:
+                        await self.ari.stop_playback(pb_id)
+                    bargein_recording = self._save_bargein_audio()
+                    # Clean up remaining segment files
+                    for j in range(i + 1, len(segments)):
+                        _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav")
+                    break
 
-            # Between segments: short recording to detect customer speech
-            rec_path = await self._record_check(max_dur=1.0, max_sil=0.5)
-            if rec_path and _check_speech_silero(rec_path):
-                log.info(f"BARGE-IN detected after seg {i}: [{text}]")
-                interrupted_text = text
-                bargein_recording = rec_path
-                break
-            if rec_path:
-                _cleanup(rec_path)
+        # If no barge-in and MixMonitor available, check after last segment
+        # (caller may speak during/after the very last segment)
+        if (check_bargein and bargein_recording is None
+                and self._mix_id is not None):
+            await asyncio.sleep(0.1)
+            if self._check_bargein_mixmonitor(min_speech_ms=150):
+                log.info(
+                    f"BARGE-IN after last seg: [{interrupted_text[:60]}]"
+                )
+                bargein_recording = self._save_bargein_audio()
 
         return interrupted_text, bargein_recording
 
@@ -462,6 +700,9 @@ class CallHandler:
         try:
             await self.ari.answer(self.channel_id)
 
+            # Start MixMonitor for background caller audio capture
+            await self._start_mixmonitor()
+
             # Greeting — play all segments back-to-back, no barge-in check
             data = await self._api()
             if not data:
@@ -489,7 +730,7 @@ class CallHandler:
                     break
 
                 interrupted_text, bargein_rec = await self.play_segments(
-                    data.get("segments", []), check_bargein=False
+                    data.get("segments", []), check_bargein=True
                 )
                 if data.get("hangup"):
                     break
@@ -499,6 +740,10 @@ class CallHandler:
         except Exception as e:
             log.exception(f"CALL={self.call_id} ERROR: {e}")
         finally:
+            try:
+                await self._stop_mixmonitor()
+            except Exception:
+                pass
             try:
                 await self._http.close()
             except Exception:
@@ -514,7 +759,7 @@ class CallHandler:
 #  ARI event listener
 # ═══════════════════════════════════════════════════════════════════════
 
-async def _events_loop(ari: ARIClient):
+async def _events_loop(ari: ARIClient, ami: AMIClient):
     """Connect to ARI WS and dispatch events, with auto-reconnect."""
     ws_url = (f"ws://127.0.0.1:8088/ari/events"
               f"?app={ARI_APP}&api_key={ARI_USER}:{ARI_PASS}")
@@ -538,7 +783,7 @@ async def _events_loop(ari: ARIClient):
                                     cid = ch.get("id")
                                     args = ev.get("args", [])
                                     log.info(f"StasisStart channel={cid}")
-                                    h = CallHandler(ari, cid, args)
+                                    h = CallHandler(ari, cid, args, ami)
                                     asyncio.ensure_future(h.run())
                         elif msg.type in (aiohttp.WSMsgType.CLOSED,
                                           aiohttp.WSMsgType.ERROR):
@@ -553,7 +798,7 @@ async def _events_loop(ari: ARIClient):
 
 async def main():
     log.info("=" * 50)
-    log.info("Starting voicebot ARI handler (Silero VAD)")
+    log.info("Starting voicebot ARI+AMI handler (MixMonitor barge-in)")
     log.info("=" * 50)
 
     # Pre-load Silero VAD
@@ -573,6 +818,10 @@ async def main():
     except Exception as e:
         log.error(f"Cannot write to PLAYBACK_DIR {PLAYBACK_DIR}: {e}")
 
+    # Connect AMI (for MixMonitor)
+    ami = AMIClient()
+    await ami.connect()
+
     async with ARIClient() as ari:
         try:
             async with aiohttp.ClientSession() as sess:
@@ -584,7 +833,7 @@ async def main():
             log.error(f"ARI connection failed: {e}")
             return
 
-        await _events_loop(ari)
+        await _events_loop(ari, ami)
 
 
 if __name__ == "__main__":
