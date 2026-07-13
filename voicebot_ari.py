@@ -154,20 +154,32 @@ class AMIClient:
         await self._writer.drain()
 
     async def _read_response(self) -> str:
-        data = b""
+        """Read AMI data until we find the actual Response: line.
+        
+        AMI sends messages delimited by blank lines (\r\n\r\n).
+        Events (Event: ...) can be interleaved with responses (Response: ...).
+        We need to find the Response: line that starts at the beginning of a
+        line, not 'Response:' appearing inside an event header value.
+        """
+        buf = b""
         deadline = time.time() + 10
         while time.time() < deadline:
-            chunk = await asyncio.wait_for(self._reader.read(4096),
-                                           timeout=10)
+            try:
+                remaining = deadline - time.time()
+                chunk = await asyncio.wait_for(
+                    self._reader.read(4096), timeout=min(remaining, 5)
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                break
             if not chunk:
                 break
-            data += chunk
-            decoded = data.decode(errors="replace")
-            if "Response:" in decoded:
-                break
-        decoded = data.decode(errors="replace")
-        log.debug(f"AMI response: {decoded[:300]}")
-        return decoded
+            buf += chunk
+            # Check each line for "Response:" at the START of the line
+            decoded = buf.decode(errors="replace")
+            for line in decoded.split("\r\n"):
+                if line.startswith("Response:"):
+                    return decoded
+        return buf.decode(errors="replace")
 
     async def action(self, action: str, **params) -> str:
         async with self._lock:
@@ -267,7 +279,7 @@ class ARIClient:
             "maxSilenceSeconds": max_sil,
             "ifExists": "overwrite", "terminateOn": "#",
         }
-        return await self.post(f"/channels/{cid}/record", params=params)
+        return await self.post(f"/channels/{cid}/record", json=params)
 
     async def stop_recording(self, name):
         return await self.delete(f"/recordings/stored/{name}")
@@ -362,6 +374,14 @@ class CallHandler:
             log.debug(f"VAD ended: baseline={baseline_rms:.5f} "
                       f"speech_ms={speech_ms}")
 
+    # ── Safe MixMonitor stop (AMI can garble responses) ───────────
+
+    async def _safe_mixmonitor_stop(self):
+        try:
+            await self.ami.mixmonitor_stop(self.channel_id)
+        except Exception:
+            pass
+
     # ── Play one segment with VAD ───────────────────────────────
 
     async def _play_segment(self, seg_data: dict, idx: int):
@@ -396,19 +416,25 @@ class CallHandler:
             resp = await self.ami.mixmonitor_start(
                 self.channel_id, self._mixmon_path
             )
-            mix_ok = "Success" in resp or "success" in resp.lower()
+            for line in resp.split("\r\n"):
+                if line.startswith("Response:") and "Success" in line:
+                    mix_ok = True
+                    break
             log.info(f"MixMonitor resp: {resp[:200]} mix_ok={mix_ok}")
         except Exception as e:
             log.warning(f"MixMonitor start failed: {e}")
 
-        # Start VAD polling if MixMonitor is active
+        # Always start VAD polling — MixMonitor may have started even if
+        # AMI response was garbled by interleaved events
         self._bargein.clear()
         self._cancel_vad = False
         vad_task = None
-        if mix_ok:
-            # Wait a brief moment for file creation
-            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)
+        if os.path.exists(self._mixmon_path):
             vad_task = asyncio.create_task(self._poll_vad())
+            log.info(f"Seg {idx} VAD started (mixmon file exists)")
+        else:
+            log.info(f"Seg {idx} VAD skipped (no mixmon file yet)")
 
         # Start ARI playback
         pb_id = f"pb_{seg_name}"
@@ -420,20 +446,12 @@ class CallHandler:
         if pb is None:
             log.warning(f"Seg {idx} play POST returned None")
             self._cancel_vad = True
-            if mix_ok:
-                await self.ami.mixmonitor_stop(self.channel_id)
+            await self._safe_mixmonitor_stop()
             _cleanup(seg_path)
             _cleanup(self._mixmon_path)
             return True, None
 
         log.info(f"Seg {idx} play POST ok: {pb}")
-
-        # If MixMonitor failed, fall back: wait for playback without VAD
-        if not mix_ok:
-            log.info(f"No MixMonitor VAD for seg {idx}, playing without VAD")
-            await self._wait_playback(pb_id)
-            _cleanup(seg_path)
-            return True, text
 
         # Wait for either playback done or barge-in
         pb_task = asyncio.create_task(self._wait_playback(pb_id))
@@ -449,10 +467,7 @@ class CallHandler:
         self._cancel_vad = True
         if vad_task and not vad_task.done():
             vad_task.cancel()
-        try:
-            await self.ami.mixmonitor_stop(self.channel_id)
-        except Exception:
-            pass
+        await self._safe_mixmonitor_stop()
 
         if self._bargein.is_set():
             log.info(f"BARGE-IN on seg {idx}: [{text}]")
