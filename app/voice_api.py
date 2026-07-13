@@ -185,6 +185,12 @@ async def voice_audio_segmented(
     bot_text = result.get("bot", "")
     hangup = result.get("hangup", False)
 
+    if not bot_text or not bot_text.strip():
+        return Response(
+            content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
+            media_type="application/json",
+        )
+
     segs = speak_segments(bot_text, "en", prefix=call_id)
     segments_json = []
     for text, path in segs:

@@ -1,2 +1,5 @@
 aiohttp>=3.9
 numpy>=1.24
+silero-vad>=5.0
+onnxruntime>=1.16
+scipy>=1.10
