@@ -45,6 +45,13 @@ LOG_FILE = "/var/log/voicebot_ari.log"
 os.makedirs(RECORD_DIR, exist_ok=True)
 os.makedirs(PLAYBACK_DIR, exist_ok=True)
 
+# Ensure Asterisk can read playback files (script may run as root)
+try:
+    import stat
+    os.chmod(PLAYBACK_DIR, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+except Exception:
+    pass
+
 VAD_RMS_THRESHOLD = 0.008    # minimum RMS (0-1) to trigger barge-in
 VAD_POLL_MS = 50             # how often to check MixMonitor file
 VAD_WINDOW_MS = 150          # audio window for each RMS check
@@ -286,22 +293,19 @@ class CallHandler:
 
     async def _api(self, audio_path=None, interrupted_text=None):
         url = f"{API_BASE}/voice-audio-segmented"
-        data = {"call_id": self.call_id}
+        form = aiohttp.FormData()
+        form.add_field("call_id", self.call_id)
         if interrupted_text:
-            data["interrupted_text"] = interrupted_text
+            form.add_field("interrupted_text", interrupted_text)
         if audio_path:
-            with open(audio_path, "rb") as f:
-                async with self._http.post(url, data=data,
-                                     files={"audio": f}) as r:
-                    if r.status != 200:
-                        return None
-                    return await r.json()
+            form.add_field("audio", open(audio_path, "rb"),
+                           filename="audio.wav", content_type="audio/wav")
         else:
-            data["outbound"] = "true"
-            async with self._http.post(url, data=data) as r:
-                if r.status != 200:
-                    return None
-                return await r.json()
+            form.add_field("outbound", "true")
+        async with self._http.post(url, data=form) as r:
+            if r.status != 200:
+                return None
+            return await r.json()
 
     # ── VAD background task ─────────────────────────────────────
 
@@ -359,6 +363,10 @@ class CallHandler:
         seg_path = f"{PLAYBACK_DIR}/{seg_name}.ulaw"
         with open(seg_path, "wb") as f:
             f.write(base64.b64decode(audio_b64))
+        try:
+            os.chmod(seg_path, 0o644)
+        except Exception:
+            pass
 
         # Start MixMonitor (try with b option for caller-only audio)
         self._mixmon_path = f"{RECORD_DIR}/{seg_name}_mix.wav"
