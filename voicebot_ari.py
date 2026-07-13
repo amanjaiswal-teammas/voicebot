@@ -47,10 +47,13 @@ LOG_FILE = "/var/log/voicebot_ari.log"
 os.makedirs(RECORD_DIR, exist_ok=True)
 os.makedirs(PLAYBACK_DIR, exist_ok=True)
 
-# Ensure Asterisk can read playback files (script may run as root)
+# Ensure Asterisk (asterisk user) can write to recording/playback dirs
 try:
     import stat
-    os.chmod(PLAYBACK_DIR, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+    os.chmod(RECORD_DIR, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO
+             | stat.S_ISGID)
+    os.chmod(PLAYBACK_DIR, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
+             | stat.S_IROTH | stat.S_IXOTH)
 except Exception:
     pass
 
@@ -219,12 +222,12 @@ class AMIClient:
         await self._writer.drain()
 
     async def _read_response(self) -> str:
-        """Read AMI data until we find the actual Response: line.
+        """Read AMI data until we find a complete Response: message.
         
-        AMI sends messages delimited by blank lines (\r\n\r\n).
-        Events (Event: ...) can be interleaved with responses (Response: ...).
-        We need to find the Response: line that starts at the beginning of a
-        line, not 'Response:' appearing inside an event header value.
+        AMI messages are delimited by blank lines (\\r\\n\\r\\n).
+        Events (Event: ...) are interleaved with responses (Response: ...).
+        We consume and discard events, returning only the first complete
+        message whose first line starts with 'Response:'.
         """
         buf = b""
         deadline = time.time() + 10
@@ -232,18 +235,30 @@ class AMIClient:
             try:
                 remaining = deadline - time.time()
                 chunk = await asyncio.wait_for(
-                    self._reader.read(4096), timeout=min(remaining, 5)
+                    self._reader.read(8192), timeout=min(remaining, 5)
                 )
             except (asyncio.TimeoutError, TimeoutError):
                 break
             if not chunk:
                 break
             buf += chunk
-            # Check each line for "Response:" at the START of the line
-            decoded = buf.decode(errors="replace")
-            for line in decoded.split("\r\n"):
-                if line.startswith("Response:"):
-                    return decoded
+            text = buf.decode(errors="replace")
+
+            # Extract complete messages (terminated by \r\n\r\n)
+            while True:
+                sep = text.find("\r\n\r\n")
+                if sep < 0:
+                    break
+                msg = text[:sep]
+                text = text[sep + 4:]
+
+                first_line = msg.split("\r\n")[0] if msg else ""
+                if first_line.startswith("Response:"):
+                    return msg
+
+            # Keep unconsumed (possibly incomplete) data
+            buf = text.encode(errors="replace")
+
         return buf.decode(errors="replace")
 
     async def action(self, action: str, **params) -> str:
@@ -259,7 +274,7 @@ class AMIClient:
 
     async def mixmonitor_start(self, channel: str, file_path: str):
         return await self.action("MixMonitor", Channel=channel,
-                                 File=file_path, Options="b")
+                                 File=file_path)
 
     async def mixmonitor_stop(self, channel: str):
         return await self.action("StopMixMonitor", Channel=channel)
@@ -490,7 +505,7 @@ class CallHandler:
         # Brief pause to ensure file is flushed to disk before Asterisk reads it
         await asyncio.sleep(0.05)
 
-        # Start MixMonitor (try with b option for caller-only audio)
+        # Start MixMonitor for VAD (mixed mode — both directions)
         self._mixmon_path = f"{RECORD_DIR}/{seg_name}_mix.wav"
         mix_ok = False
         try:
@@ -512,6 +527,27 @@ class CallHandler:
         vad_task = None
         await asyncio.sleep(0.1)
         if os.path.exists(self._mixmon_path):
+            size_before = os.path.getsize(self._mixmon_path)
+            await asyncio.sleep(0.3)
+            size_after = os.path.getsize(self._mixmon_path) if os.path.exists(self._mixmon_path) else 0
+            log.info(f"Seg {idx} MixMonitor file: {size_before}→{size_after} bytes "
+                     f"(mix_ok={mix_ok})")
+            if size_after <= 44:
+                log.warning(f"Seg {idx} MixMonitor file NOT growing! "
+                            f"Attempting restart...")
+                await self._safe_mixmonitor_stop()
+                await asyncio.sleep(0.05)
+                try:
+                    resp2 = await self.ami.mixmonitor_start(
+                        self.channel_id, self._mixmon_path
+                    )
+                    ok2 = "Success" in resp2
+                    log.info(f"Seg {idx} MixMonitor restart: ok={ok2} resp={resp2[:150]}")
+                except Exception as e2:
+                    log.warning(f"Seg {idx} MixMonitor restart failed: {e2}")
+                await asyncio.sleep(0.3)
+                size_after2 = os.path.getsize(self._mixmon_path) if os.path.exists(self._mixmon_path) else 0
+                log.info(f"Seg {idx} After restart: {size_after2} bytes")
             vad_task = asyncio.create_task(self._poll_vad())
             log.info(f"Seg {idx} VAD started (mixmon file exists)")
         else:
