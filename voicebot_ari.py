@@ -602,7 +602,7 @@ async def main():
     async with ARIClient() as ari, AMIClient() as ami:
         # Verify connectivity
         try:
-            ping = await ari.get("/ping")
+            ping = await ari.get("/asterisk/version")
             if ping is None:
                 log.error("ARI unreachable — check http.conf / ari.conf")
                 return
