@@ -83,23 +83,52 @@ def _pcm_rms(raw: bytes, sample_width: int = 2) -> float:
 
 
 def _tail_rms(wav_path: str, window_ms: int = 150) -> float:
-    """Read raw PCM from the trailing tail of a WAV file (safe for
-    in-progress recordings since it bypasses the header)."""
+    """Read raw PCM from the trailing tail of a WAV file.
+
+    For in-progress files (written by MixMonitor), the WAV header's
+    nframes field is stale (0) until the file is closed.  We therefore
+    compute the data region size from the actual file size and read raw
+    bytes from the end, bypassing the header entirely.
+    """
     try:
         import wave
-        with wave.open(wav_path, "rb") as w:
-            rate = w.getframerate()
-            sw = w.getsampwidth()
-            nframes = w.getnframes()
-            if rate == 0 or sw == 0 or nframes == 0:
-                return 0.0
-            n = int(rate * window_ms / 1000)
-            n = min(n, nframes)
-            if n < 1:
-                return 0.0
-            w.setpos(max(0, nframes - n))
-            raw = w.readframes(n)
-            return _pcm_rms(raw, sw)
+        fsize = os.path.getsize(wav_path)
+        if fsize < 48:          # too small for any useful audio
+            return 0.0
+
+        # Try normal WAV read first (works for completed files)
+        try:
+            with wave.open(wav_path, "rb") as w:
+                rate = w.getframerate()
+                sw = w.getsampwidth()
+                nframes = w.getnframes()
+                if rate > 0 and sw > 0 and nframes > 0:
+                    n = int(rate * window_ms / 1000)
+                    n = min(n, nframes)
+                    if n >= 1:
+                        w.setpos(max(0, nframes - n))
+                        raw = w.readframes(n)
+                        if raw:
+                            return _pcm_rms(raw, sw)
+        except Exception:
+            pass
+
+        # Fallback: read raw bytes from end of file, skipping 44-byte
+        # WAV header.  Assumes 8 kHz mono 16-bit (2 bytes/sample) which
+        # matches our TTS output.
+        hdr = 44
+        rate = 8000
+        sw = 2
+        data_size = max(0, fsize - hdr)
+        bytes_per_sec = rate * sw
+        want_bytes = int(bytes_per_sec * window_ms / 1000)
+        want_bytes = min(want_bytes, data_size)
+        if want_bytes < sw:
+            return 0.0
+        with open(wav_path, "rb") as f:
+            f.seek(fsize - want_bytes)
+            raw = f.read(want_bytes)
+        return _pcm_rms(raw, sw)
     except Exception:
         return 0.0
 
