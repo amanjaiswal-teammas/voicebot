@@ -129,8 +129,8 @@ class AMIClient:
         self._reader, self._writer = await asyncio.wait_for(
             asyncio.open_connection(AMI_HOST, AMI_PORT), timeout=5
         )
-        # Read banner
-        banner = await asyncio.wait_for(self._reader.readuntil(b"\r\n\r\n"),
+        # Read banner: "Asterisk Call Manager/9.0.0\r\n"
+        banner = await asyncio.wait_for(self._reader.readline(),
                                         timeout=5)
         # Login
         await self._send(f"Action: Login\r\n"
