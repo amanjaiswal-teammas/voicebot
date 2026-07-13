@@ -47,6 +47,7 @@ chown asterisk:asterisk /var/lib/asterisk/sounds/voicebot
 
 echo "=== 6. Reload Asterisk configuration ==="
 asterisk -rx "module reload" || true
+asterisk -rx "dialplan reload" || true
 
 echo "=== 7. Create systemd service for ARI handler ==="
 cat > /etc/systemd/system/voicebot-ari.service << 'SERVICE'

@@ -395,7 +395,9 @@ class CallHandler:
         self.args = args
         self.call_id = str(uuid.uuid4())
         self._http: aiohttp.ClientSession = None
-        self._mix_path = f"/tmp/{self.call_id}_caller"
+        # MixMonitor path set by dialplan using UNIQUEID (args[0])
+        mix_id = args[0] if args else self.call_id
+        self._mix_path = f"/tmp/{mix_id}_caller"
         self._mix_offset = 0
         self._mix_rate = 8000
         self._mix_active = False
@@ -657,15 +659,25 @@ class CallHandler:
         """Play all segments; return (interrupted_text, recording_path).
 
         When check_bargein is True, after each segment finishes (bot is
-        silent), we do a very short ARI recording (200-300ms) to capture
-        any caller speech. If the caller spoke → barge-in detected.
+        silent), we read the MixMonitor file and run Silero VAD. If the
+        caller spoke → barge-in detected, stop playing remaining segments.
 
-        Trade-off: ~200ms gap between segments (vs zero gaps with
-        MixMonitor). But this is the ONLY reliable approach since
-        MixMonitor AMI options are not parsed correctly in Asterisk 20.6.
+        MixMonitor runs from the dialplan (before Stasis), capturing
+        caller-only audio ('b' option) with zero gaps between segments.
         """
         interrupted_text = None
         bargein_recording = None
+
+        # Reset offset so we only read audio captured from NOW forward.
+        # Discards stale audio from greeting / previous segments.
+        if check_bargein and self._mix_active:
+            try:
+                raw_path = self._mix_path + ".raw"
+                if os.path.exists(raw_path):
+                    self._mix_offset = os.path.getsize(raw_path)
+                    log.info(f"BARGEIN: offset reset to {self._mix_offset}")
+            except Exception:
+                pass
 
         for i, seg in enumerate(segments):
             ok, text, pb_id = await self._play_segment(seg, i)
@@ -676,28 +688,34 @@ class CallHandler:
 
             interrupted_text = text
 
-            # Barge-in check: short ARI recording (bot just went silent)
-            if check_bargein:
-                rec_path = await self._record_check(
-                    max_dur=0.3, max_sil=0.15
+            # Barge-in check: read MixMonitor file (bot just went silent)
+            if check_bargein and self._mix_active:
+                # Small delay for audio to flush to disk
+                await asyncio.sleep(0.1)
+                if self._check_bargein_mixmonitor(min_speech_ms=100):
+                    log.info(
+                        f"BARGE-IN after seg {i}/{len(segments)-1}: "
+                        f"[{text[:60]}]"
+                    )
+                    # Cancel remaining segments
+                    if pb_id is not None:
+                        await self.ari.stop_playback(pb_id)
+                    bargein_recording = self._save_bargein_audio()
+                    # Clean up remaining segment files
+                    for j in range(i + 1, len(segments)):
+                        _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav")
+                    break
+
+        # If no barge-in and MixMonitor available, check after last segment
+        # (caller may speak during/after the very last segment)
+        if (check_bargein and bargein_recording is None
+                and self._mix_active):
+            await asyncio.sleep(0.1)
+            if self._check_bargein_mixmonitor(min_speech_ms=150):
+                log.info(
+                    f"BARGE-IN after last seg: [{interrupted_text[:60]}]"
                 )
-                if rec_path and os.path.exists(rec_path):
-                    # Check if recording has speech
-                    has_speech = _check_speech_silero(rec_path)
-                    if has_speech:
-                        log.info(
-                            f"BARGE-IN after seg {i}/{len(segments)-1}: "
-                            f"[{text[:60]}]"
-                        )
-                        bargein_recording = rec_path
-                        # Clean up remaining segment files
-                        for j in range(i + 1, len(segments)):
-                            _cleanup(
-                                f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav"
-                            )
-                        break
-                    else:
-                        _cleanup(rec_path)
+                bargein_recording = self._save_bargein_audio()
 
         return interrupted_text, bargein_recording
 
@@ -736,13 +754,20 @@ class CallHandler:
     # ── Main conversation loop ──────────────────────────────────
 
     async def run(self):
-        log.info(f"CALL={self.call_id} CHAN={self.channel_id} START")
+        log.info(f"CALL={self.call_id} CHAN={self.channel_id} START mix={self._mix_path}")
         self._http = aiohttp.ClientSession()
         try:
             await self.ari.answer(self.channel_id)
 
-            # Start MixMonitor for background caller audio capture
-            await self._start_mixmonitor()
+            # Dialplan started MixMonitor before Stasis — verify file exists
+            await asyncio.sleep(0.3)
+            raw_path = self._mix_path + ".raw"
+            if os.path.exists(raw_path):
+                self._mix_active = True
+                log.info(f"MixMonitor file found: {raw_path} "
+                         f"({os.path.getsize(raw_path)} bytes)")
+            else:
+                log.warning(f"MixMonitor file NOT found: {raw_path}")
 
             # Greeting — play all segments back-to-back, no barge-in check
             data = await self._api()
@@ -781,10 +806,6 @@ class CallHandler:
         except Exception as e:
             log.exception(f"CALL={self.call_id} ERROR: {e}")
         finally:
-            try:
-                await self._stop_mixmonitor()
-            except Exception:
-                pass
             try:
                 await self._http.close()
             except Exception:
