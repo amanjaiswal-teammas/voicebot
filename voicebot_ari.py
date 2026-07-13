@@ -250,6 +250,9 @@ class ARIClient:
         }
         return await self.post(f"/channels/{cid}/record", json=params)
 
+    async def stop_live_recording(self, name):
+        return await self._req("PUT", f"/recordings/live/{name}/stop")
+
     async def stop_recording(self, name):
         return await self.delete(f"/recordings/stored/{name}")
 
@@ -611,30 +614,35 @@ class CallHandler:
         """Do a short ARI recording and return the WAV path (or None).
 
         Used between segments to detect customer speech (barge-in).
+        Starts a recording then stops it early after `max_dur` seconds,
+        so we don't block the channel for the full ARI int minimum (1s).
+        ALWAYS stops the live recording to free the channel.
         """
         rec_name = f"{self.call_id}_chk_{int(time.time() * 1000)}"
+        # ARI maxDurationSeconds is int — use 10 as safety net, we stop early
         result = await self.ari.record(
             self.channel_id, rec_name,
-            max_dur=max_dur, max_sil=max_sil,
+            max_dur=10, max_sil=2,
         )
         if result is None:
+            log.warning(f"Record check: record start failed for {rec_name}")
             return None
 
-        # Wait for recording to finish
-        for _ in range(int(max_dur * 10) + 5):
-            await asyncio.sleep(0.1)
-            r = await self.ari.get(f"/recordings/live/{rec_name}")
-            if r is None:
-                break
-            state = r.get("state", "")
-            if state in ("done", "cancelled", "failed"):
-                break
+        # Wait just long enough to capture any immediate caller speech
+        await asyncio.sleep(max_dur)
+
+        # Stop the recording immediately to free the channel
+        try:
+            await self.ari.stop_live_recording(rec_name)
+        except Exception:
+            pass
 
         # Brief pause to ensure file is flushed to disk
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         raw = await self.ari.get_recording(rec_name)
         if raw is None or len(raw) < 100:
+            log.info(f"Record check: {rec_name} empty/missing ({len(raw) if raw else 0} bytes)")
             return None
 
         out = f"{RECORD_DIR}/{rec_name}.wav"
@@ -831,7 +839,7 @@ async def _events_loop(ari: ARIClient, ami: AMIClient):
 
 async def main():
     log.info("=" * 50)
-    log.info("Starting voicebot ARI+AMI handler (MixMonitor barge-in)")
+    log.info("Starting voicebot ARI+AMI handler (record-check barge-in)")
     log.info("=" * 50)
 
     # Pre-load Silero VAD
