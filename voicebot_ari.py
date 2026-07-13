@@ -178,7 +178,8 @@ def _check_speech_rms(wav_path: str) -> bool:
 
 class ARIClient:
     def __init__(self):
-        self._auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
+        cred = base64.b64encode(f"{ARI_USER}:{ARI_PASS}".encode()).decode()
+        self._auth = {"Authorization": f"Basic {cred}"}
         self._session = None
 
     async def __aenter__(self):
@@ -190,7 +191,7 @@ class ARIClient:
 
     async def _req(self, method, path, **kw):
         url = f"{ARI_BASE}/ari{path}"
-        async with self._session.request(method, url, auth=self._auth,
+        async with self._session.request(method, url, headers=self._auth,
                                          **kw) as r:
             if r.status >= 400:
                 text = (await r.read())[:200]
@@ -488,7 +489,7 @@ class CallHandler:
                     break
 
                 interrupted_text, bargein_rec = await self.play_segments(
-                    data.get("segments", [])
+                    data.get("segments", []), check_bargein=False
                 )
                 if data.get("hangup"):
                     break
@@ -576,8 +577,8 @@ async def main():
         try:
             async with aiohttp.ClientSession() as sess:
                 url = f"{ARI_BASE}/ari/ping"
-                auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
-                async with sess.get(url, auth=auth) as r:
+                cred = base64.b64encode(f"{ARI_USER}:{ARI_PASS}".encode()).decode()
+                async with sess.get(url, headers={"Authorization": f"Basic {cred}"}) as r:
                     log.info(f"ARI connected (status={r.status})")
         except Exception as e:
             log.error(f"ARI connection failed: {e}")
