@@ -82,44 +82,80 @@ def _pcm_rms(raw: bytes, sample_width: int = 2) -> float:
     return rms / 32768.0
 
 
+def _find_wav_data_offset(f) -> tuple:
+    """Parse WAV RIFF chunks to find the data offset and format.
+
+    Returns (data_offset, sample_rate, sample_width) or (44, 8000, 2)
+    as safe defaults if parsing fails.
+    """
+    try:
+        f.seek(0)
+        riff = f.read(4)
+        if riff != b"RIFF":
+            return 44, 8000, 2
+        f.read(4)  # file size
+        wave_id = f.read(4)
+        if wave_id != b"WAVE":
+            return 44, 8000, 2
+        rate = 8000
+        sw = 2
+        while True:
+            chunk_id = f.read(4)
+            if len(chunk_id) < 4:
+                break
+            chunk_size_bytes = f.read(4)
+            if len(chunk_size_bytes) < 4:
+                break
+            chunk_size = int.from_bytes(chunk_size_bytes, "little")
+            chunk_data_start = f.tell()
+            if chunk_id == b"fmt ":
+                fmt_data = f.read(min(chunk_size, 16))
+                if len(fmt_data) >= 16:
+                    sw = struct.unpack_from("<H", fmt_data, 2)[0]
+                    sw = sw // 8  # bits → bytes
+                    rate = struct.unpack_from("<I", fmt_data, 4)[0]
+                # Seek to end of chunk (pad to even boundary)
+                f.seek(chunk_data_start + chunk_size + (chunk_size & 1))
+                continue
+            if chunk_id == b"data":
+                return chunk_data_start, rate, max(sw, 1)
+            # skip unknown chunk (align to even boundary)
+            f.seek(chunk_data_start + chunk_size + (chunk_size & 1))
+    except Exception:
+        pass
+    return 44, 8000, 2
+
+
 def _tail_rms(wav_path: str, window_ms: int = 150) -> float:
     """Read raw PCM from the trailing tail of a WAV file.
 
     For in-progress files (written by MixMonitor), the WAV header's
-    nframes field is stale (0) until the file is closed.  We therefore
-    compute the data region size from the actual file size and read raw
-    bytes from the end, bypassing the header entirely.
+    nframes field is stale (0) until the file is closed.  We parse the
+    RIFF chunks to find the actual data offset, then read raw bytes
+    from the end of the file.
     """
     try:
-        import wave
         fsize = os.path.getsize(wav_path)
-        if fsize < 48:          # too small for any useful audio
+        if fsize < 48:
             return 0.0
 
-        # Try normal WAV read first (works for completed files)
+        data_offset = 44
+        rate = 8000
+        sw = 2
+
+        # Parse WAV header to get real data_offset, rate, sw
         try:
-            with wave.open(wav_path, "rb") as w:
-                rate = w.getframerate()
-                sw = w.getsampwidth()
-                nframes = w.getnframes()
-                if rate > 0 and sw > 0 and nframes > 0:
-                    n = int(rate * window_ms / 1000)
-                    n = min(n, nframes)
-                    if n >= 1:
-                        w.setpos(max(0, nframes - n))
-                        raw = w.readframes(n)
-                        if raw:
-                            return _pcm_rms(raw, sw)
+            with open(wav_path, "rb") as f:
+                data_offset, rate, sw = _find_wav_data_offset(f)
         except Exception:
             pass
 
-        # Fallback: read raw bytes from end of file, skipping 44-byte
-        # WAV header.  Assumes 8 kHz mono 16-bit (2 bytes/sample) which
-        # matches our TTS output.
-        hdr = 44
-        rate = 8000
-        sw = 2
-        data_size = max(0, fsize - hdr)
+        if rate <= 0:
+            rate = 8000
+        if sw <= 0:
+            sw = 2
+
+        data_size = max(0, fsize - data_offset)
         bytes_per_sec = rate * sw
         want_bytes = int(bytes_per_sec * window_ms / 1000)
         want_bytes = min(want_bytes, data_size)
@@ -367,9 +403,11 @@ class CallHandler:
         baseline_rms = 0.0
         baseline_samples = 0
         triggered = False
+        poll_count = 0
 
         while not self._cancel_vad:
             await asyncio.sleep(VAD_POLL_MS / 1000)
+            poll_count += 1
             if not os.path.exists(path):
                 continue
             try:
@@ -377,11 +415,18 @@ class CallHandler:
             except Exception:
                 continue
 
-            # First 5 samples: establish baseline (30 clients != empty)
+            # First 5 samples: establish baseline
             if baseline_samples < 5:
                 if rms > 0:
                     baseline_rms = (baseline_rms * baseline_samples + rms) / (baseline_samples + 1)
                     baseline_samples += 1
+                    if baseline_samples == 5:
+                        log.info(f"VAD baseline set: {baseline_rms:.5f} "
+                                 f"(poll #{poll_count})")
+                if poll_count % 10 == 0:
+                    fsize = os.path.getsize(path) if os.path.exists(path) else 0
+                    log.info(f"VAD baseline: samples={baseline_samples}/5 "
+                             f"rms={rms:.5f} fsize={fsize}")
                 continue
 
             # Adaptive threshold: baseline + offset, min VAD_RMS_THRESHOLD
@@ -399,9 +444,16 @@ class CallHandler:
             else:
                 speech_ms = max(0, speech_ms - VAD_POLL_MS)
 
+            if poll_count % 10 == 0:
+                fsize = os.path.getsize(path) if os.path.exists(path) else 0
+                log.info(f"VAD poll #{poll_count}: rms={rms:.5f} "
+                         f"baseline={baseline_rms:.5f} "
+                         f"thresh={adaptive_threshold:.5f} "
+                         f"speech_ms={speech_ms} fsize={fsize}")
+
         if not triggered:
             log.debug(f"VAD ended: baseline={baseline_rms:.5f} "
-                      f"speech_ms={speech_ms}")
+                      f"speech_ms={speech_ms} polls={poll_count}")
 
     # ── Safe MixMonitor stop (AMI can garble responses) ───────────
 
