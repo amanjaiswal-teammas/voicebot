@@ -476,7 +476,8 @@ class CallHandler:
 
         Called RIGHT AFTER a playback segment finishes, so the bot is
         silent — any audio in the file must be from the caller.
-        MixMonitor Options 'b|r' captures only the read (caller) direction.
+        The offset is snapshotted before this call so only gap audio
+        (captured while bot was silent) is read.
         """
         samples = self._read_mixmonitor_chunk()
         if samples is None or len(samples) == 0:
@@ -663,7 +664,9 @@ class CallHandler:
         caller spoke → barge-in detected, stop playing remaining segments.
 
         MixMonitor runs from the dialplan (before Stasis), capturing
-        caller-only audio ('b' option) with zero gaps between segments.
+        mixed audio with zero gaps between segments. After each segment
+        finishes, we snapshot the file offset to skip bot TTS audio,
+        then read only the gap audio (caller only, since bot is silent).
         """
         interrupted_text = None
         bargein_recording = None
@@ -690,8 +693,16 @@ class CallHandler:
 
             # Barge-in check: read MixMonitor file (bot just went silent)
             if check_bargein and self._mix_active:
-                # Small delay for audio to flush to disk
-                await asyncio.sleep(0.1)
+                # Mark current position — skip all bot audio written during
+                # playback. Only NEW audio (from the gap) will be read.
+                try:
+                    raw_path = self._mix_path + ".raw"
+                    if os.path.exists(raw_path):
+                        self._mix_offset = os.path.getsize(raw_path)
+                except Exception:
+                    pass
+                # Small delay for caller audio to flush to disk
+                await asyncio.sleep(0.15)
                 if self._check_bargein_mixmonitor(min_speech_ms=100):
                     log.info(
                         f"BARGE-IN after seg {i}/{len(segments)-1}: "
@@ -710,7 +721,14 @@ class CallHandler:
         # (caller may speak during/after the very last segment)
         if (check_bargein and bargein_recording is None
                 and self._mix_active):
-            await asyncio.sleep(0.1)
+            # Snapshot offset to skip bot audio
+            try:
+                raw_path = self._mix_path + ".raw"
+                if os.path.exists(raw_path):
+                    self._mix_offset = os.path.getsize(raw_path)
+            except Exception:
+                pass
+            await asyncio.sleep(0.15)
             if self._check_bargein_mixmonitor(min_speech_ms=150):
                 log.info(
                     f"BARGE-IN after last seg: [{interrupted_text[:60]}]"
