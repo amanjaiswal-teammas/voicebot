@@ -82,6 +82,42 @@ def _load_silero():
         _silero_model = False
 
 
+def _read_wav_samples(wav_path: str):
+    """Read WAV file using soundfile, returns (samples_float32, rate) or (None, 0)."""
+    try:
+        import soundfile as sf
+        data, rate = sf.read(wav_path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        return data, rate
+    except Exception:
+        pass
+    # Fallback: try wave module
+    try:
+        with _wave.open(wav_path, "rb") as w:
+            nframes = w.getnframes()
+            rate = w.getframerate()
+            sw = w.getsampwidth()
+            if nframes == 0 or rate == 0:
+                return None, 0
+            raw = w.readframes(nframes)
+        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        return samples, rate
+    except Exception:
+        pass
+    # Last resort: read raw bytes from end of file (skip WAV header)
+    try:
+        with open(wav_path, "rb") as f:
+            data = f.read()
+        if len(data) < 48:
+            return None, 0
+        raw = data[44:]  # skip standard WAV header
+        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        return samples, 8000
+    except Exception:
+        return None, 0
+
+
 def _check_speech_silero(wav_path: str) -> bool:
     """Return True if speech is detected in the WAV file.
 
@@ -96,14 +132,9 @@ def _check_speech_silero(wav_path: str) -> bool:
         import torch
         get_speech_timestamps = _silero_utils
 
-        with _wave.open(wav_path, "rb") as w:
-            rate = w.getframerate()
-            nframes = w.getnframes()
-            if nframes == 0:
-                return False
-            raw = w.readframes(nframes)
-
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        samples, rate = _read_wav_samples(wav_path)
+        if samples is None or len(samples) == 0:
+            return False
 
         if rate != 16000:
             from scipy.signal import resample_poly
@@ -129,20 +160,11 @@ def _check_speech_silero(wav_path: str) -> bool:
 def _check_speech_rms(wav_path: str) -> bool:
     """Simple RMS-based speech detection (fallback)."""
     try:
-        with _wave.open(wav_path, "rb") as w:
-            nframes = w.getnframes()
-            rate = w.getframerate()
-            sw = w.getsampwidth()
-            if nframes == 0 or rate == 0:
-                return False
-            frames = w.readframes(nframes)
-        if len(frames) < sw:
+        samples, rate = _read_wav_samples(wav_path)
+        if samples is None or len(samples) == 0 or rate == 0:
             return False
-        n = len(frames) // sw
-        fmt = "<" + "h" * n
-        samples = struct.unpack(fmt, frames[:n * sw])
-        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5 / 32768.0
-        active = sum(1 for s in samples if abs(s) > 160)
+        rms = float(np.sqrt(np.mean(samples ** 2)))
+        active = int(np.sum(np.abs(samples) > 0.005))
         active_ms = active / rate * 1000
         log.info(f"RMS fallback: rms={rms:.5f} active_ms={active_ms:.0f}")
         return rms > 0.01 and active_ms > 100
@@ -307,10 +329,11 @@ class CallHandler:
         log.info(f"Seg {idx} play ok: state={pb.get('state')}")
         return True, text, pb_id
 
-    async def _wait_playback(self, pb_id: str):
+    async def _wait_playback(self, pb_id: str, timeout: float = 30.0):
         """Poll until playback completes or fails."""
         checks = 0
-        while True:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
             await asyncio.sleep(0.1)
             state = await self.ari.playback_state(pb_id)
             checks += 1
@@ -318,6 +341,7 @@ class CallHandler:
                 log.info(f"Playback {pb_id}: state={state} check={checks}")
             if state in ("done", "failed", None):
                 return
+        log.warning(f"Playback {pb_id} timed out after {timeout}s (state={state})")
 
     # ── Short recording check (between segments) ────────────────
 
@@ -344,6 +368,9 @@ class CallHandler:
             state = r.get("state", "")
             if state in ("done", "cancelled", "failed"):
                 break
+
+        # Brief pause to ensure file is flushed to disk
+        await asyncio.sleep(0.15)
 
         raw = await self.ari.get_recording(rec_name)
         if raw is None or len(raw) < 100:
@@ -379,7 +406,7 @@ class CallHandler:
                 break
 
             # Between segments: short recording to detect customer speech
-            rec_path = await self._record_check(max_dur=2.0, max_sil=0.8)
+            rec_path = await self._record_check(max_dur=1.0, max_sil=0.5)
             if rec_path and _check_speech_silero(rec_path):
                 log.info(f"BARGE-IN detected after seg {i}: [{text}]")
                 interrupted_text = text
