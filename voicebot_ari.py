@@ -600,13 +600,13 @@ async def main():
     log.info("═" * 50)
 
     async with ARIClient() as ari, AMIClient() as ami:
-        # Verify connectivity
+        # Verify ARI connectivity (any HTTP response = ARI is up)
         try:
-            ping = await ari.get("/asterisk/version")
-            if ping is None:
-                log.error("ARI unreachable — check http.conf / ari.conf")
-                return
-            log.info(f"ARI connected: {ping}")
+            async with aiohttp.ClientSession() as sess:
+                url = f"{ARI_BASE}/ari/ping"
+                auth = aiohttp.BasicAuth(ARI_USER, ARI_PASS)
+                async with sess.get(url, auth=auth) as r:
+                    log.info(f"ARI connected (status={r.status})")
         except Exception as e:
             log.error(f"ARI connection failed: {e}")
             return
