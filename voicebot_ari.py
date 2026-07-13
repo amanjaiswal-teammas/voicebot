@@ -384,11 +384,12 @@ class CallHandler:
 
     # ── Play all segments with between-segment barge-in check ───
 
-    async def play_segments(self, segments: list):
+    async def play_segments(self, segments: list, check_bargein: bool = True):
         """Play all segments; return (interrupted_text, recording_path).
 
-        Between each segment, a short recording checks for customer speech.
-        If speech detected → barge-in: returns the recording for STT.
+        If check_bargein is True, a short recording between segments detects
+        customer speech (barge-in). If False, plays all segments back-to-back
+        with no gaps (used for greeting).
         """
         interrupted_text = None
         bargein_recording = None
@@ -404,6 +405,9 @@ class CallHandler:
             if i == len(segments) - 1:
                 interrupted_text = text
                 break
+
+            if not check_bargein:
+                continue
 
             # Between segments: short recording to detect customer speech
             rec_path = await self._record_check(max_dur=1.0, max_sil=0.5)
@@ -457,14 +461,13 @@ class CallHandler:
         try:
             await self.ari.answer(self.channel_id)
 
-            # Greeting
+            # Greeting — play all segments back-to-back, no barge-in check
             data = await self._api()
             if not data:
                 await self.ari.hangup(self.channel_id)
                 return
-
             interrupted_text, bargein_rec = await self.play_segments(
-                data.get("segments", [])
+                data.get("segments", []), check_bargein=False
             )
 
             # Conversation loop
