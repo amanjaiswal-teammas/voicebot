@@ -447,40 +447,25 @@ class CallHandler:
     async def _short_record_check(self, duration: float = 0.4) -> str:
         """Do a brief ARI recording between segments to detect barge-in.
 
-        Uses maxDurationSeconds=1 so the recording completes naturally.
-        After completion, polls GET /recordings/live/{name} until the
-        recording disappears (stored), then downloads it.
-
-        This matches the AGI version's detect_voice_bargein() which does
-        a 400ms RECORD FILE between segments. After the bot finishes
-        playing a segment, any audio on the channel must be from the
-        caller (since the bot is silent). If we detect speech, the
-        caller is trying to interrupt.
+        Uses maxDurationSeconds=0.4 matching the AGI version's 400ms
+        RECORD FILE. After the bot finishes playing a segment, any
+        audio on the channel must be from the caller (since the bot
+        is silent). If we detect speech, the caller is trying to
+        interrupt.
 
         Returns WAV path if speech detected, None otherwise.
         """
         rec_name = f"{self.call_id}_chk_{int(time.time() * 1000)}"
         result = await self.ari.record(
             self.channel_id, rec_name,
-            max_dur=1, max_sil=10,
+            max_dur=0.4, max_sil=10,
         )
         if result is None:
             log.warning(f"Short check: record start failed for {rec_name}")
             return None
 
-        # Wait for the recording to complete naturally (maxDurationSeconds=1)
-        # then a small buffer for file flush
-        await asyncio.sleep(1.5)
-
-        # Poll until recording disappears from live (stored) or times out
-        for _ in range(10):
-            r = await self.ari.get(f"/recordings/live/{rec_name}")
-            if r is None:
-                break
-            state = r.get("state", "")
-            if state in ("done", "cancelled", "failed"):
-                break
-            await asyncio.sleep(0.1)
+        # Wait just long enough for the 0.4s recording to finish
+        await asyncio.sleep(0.6)
 
         # Retrieve the stored recording
         raw = await self.ari.get_recording(rec_name)
