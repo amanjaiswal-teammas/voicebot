@@ -57,6 +57,7 @@ def process_call(
                 "bot": "",
                 "audio": None,
                 "hangup": True,
+                "lang": "en",
             }
 
         output = f"audio/{call_id}_retry.wav"
@@ -72,6 +73,7 @@ def process_call(
             "caller": "",
             "bot": "Sorry, I didn't catch that.",
             "audio": output,
+            "lang": "en",
         }
 
     print("CALLER:", caller_text)
@@ -145,7 +147,8 @@ def process_call(
         return {
             "caller": caller_text,
             "bot": answer,
-            "audio": None
+            "audio": None,
+            "lang": lang,
         }
 
     print(
@@ -166,4 +169,5 @@ def process_call(
         "bot": answer,
         "audio": output_file,
         "hangup": hangup,
+        "lang": lang,
     }
