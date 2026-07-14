@@ -10,12 +10,13 @@ SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 def ask_llm(messages, lang="en"):
 
     lang_msg = (
-        "REPLY IN HINGLISH. The customer is speaking Hindi. "
-        "Your entire response must be in Hinglish (Hindi + English words). "
-        "Do NOT reply in English."
+        "REPLY IN HINGLISH ONLY. Customer spoke Hindi. "
+        "Use simple Hindi words with English product names and numbers. "
+        "Example: 'Aapka order confirm ho gaya hai.' "
+        "Do NOT use complex Hindi. Do NOT reply in English."
         if lang == "hi"
-        else "REPLY IN ENGLISH. The customer is speaking English. "
-             "Your entire response must be in English only."
+        else "REPLY IN ENGLISH ONLY. Customer spoke English. "
+             "Your response must be entirely in English."
     )
 
     payload = {
@@ -33,8 +34,8 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0,
-            "num_predict": 60,
-            "num_ctx": 1024
+            "num_predict": 150,
+            "num_ctx": 4096
         }
     }
 
