@@ -442,20 +442,15 @@ class CallHandler:
                 return
         log.warning(f"Playback {pb_id} timed out after {timeout}s")
 
-    # ── Short recording check (between segments) ────────────────
+    # ── Barge-in recording (runs DURING playback) ──────────────
 
-    async def _short_record_check(self, duration: float = 0.4) -> str:
-        """Do a brief ARI recording between segments to detect barge-in.
+    async def _start_bargein_rec(self) -> str:
+        """Start a short ARI recording to capture caller audio.
 
-        Uses maxDurationSeconds=1 so the recording completes naturally.
-        After completion, polls GET /recordings/live/{name} until the
-        recording disappears (stored), then downloads it.
-
-        After the bot finishes playing a segment, any audio on the
-        channel must be from the caller (since the bot is silent).
-        If we detect speech, the caller is trying to interrupt.
-
-        Returns WAV path if speech detected, None otherwise.
+        ARI recording captures the read direction (caller's mic),
+        NOT the bot's playback (write direction). So we can start
+        this WHILE the bot is still playing — if the caller speaks,
+        it gets captured. Returns the recording name.
         """
         rec_name = f"{self.call_id}_chk_{int(time.time() * 1000)}"
         result = await self.ari.record(
@@ -463,14 +458,19 @@ class CallHandler:
             max_dur=1, max_sil=10,
         )
         if result is None:
-            log.warning(f"Short check: record start failed for {rec_name}")
+            log.warning(f"Barge-in rec start failed for {rec_name}")
             return None
+        return rec_name
 
-        # Recording finishes in ~0.1-0.3s (Asterisk "Took too long" kills it early).
-        # Short initial wait + fast poll keeps total overhead ~0.3-0.5s.
+    async def _finish_bargein_rec(self, rec_name: str) -> str:
+        """Wait for a barge-in recording to finish, download, check for speech.
+
+        Returns WAV path if speech detected, None otherwise.
+        """
+        # Recording finishes quickly — short wait + fast poll
         await asyncio.sleep(0.3)
 
-        for _ in range(20):  # up to 2.0s total
+        for _ in range(20):  # up to 2s total
             r = await self.ari.get(f"/recordings/live/{rec_name}")
             if r is None:
                 break
@@ -479,37 +479,37 @@ class CallHandler:
                 break
             await asyncio.sleep(0.1)
 
-        # Retrieve the stored recording
         raw = await self.ari.get_recording(rec_name)
         if raw is None or len(raw) < 200:
-            log.info(f"Short check: {rec_name} empty ({len(raw) if raw else 0} bytes)")
+            log.info(f"Barge-in rec: {rec_name} empty ({len(raw) if raw else 0} bytes)")
             return None
 
         out = f"{RECORD_DIR}/{rec_name}.wav"
         with open(out, "wb") as f:
             f.write(raw)
 
-        # Check for speech
         speech = _check_speech_silero(out)
         if speech:
-            log.info(f"Short check: SPEECH DETECTED ({len(raw)} bytes)")
+            log.info(f"Barge-in rec: SPEECH DETECTED ({len(raw)} bytes)")
             return out
         else:
-            log.info(f"Short check: no speech ({len(raw)} bytes)")
+            log.info(f"Barge-in rec: no speech ({len(raw)} bytes)")
             _cleanup(out)
             return None
 
     # ── Play all segments with barge-in detection ───────────────
 
     async def play_segments(self, segments: list, check_bargein: bool = True):
-        """Play all segments; return (interrupted_text, bargein_recording_path).
+        """Play all segments with live barge-in detection.
 
-        Barge-in detection: after each segment finishes, do a short ARI
-        recording to check if the caller is speaking. This matches the
-        AGI version's approach (400ms RECORD between segments).
+        For each segment:
+          1. Start ARI recording DURING playback (captures caller audio)
+          2. Wait for playback to finish
+          3. Check recording for speech
 
-        If barge-in detected → record the caller's full utterance →
-        return the merged recording for STT processing.
+        This way barge-in is detected WHILE the bot speaks, not after.
+        ARI recordings capture read-direction audio (caller mic),
+        so the bot's playback doesn't interfere.
         """
         interrupted_text = None
         bargein_recording = None
@@ -522,16 +522,21 @@ class CallHandler:
             if pb_id is None:
                 continue
 
+            # Start barge-in recording DURING playback
+            rec_name = None
+            if check_bargein:
+                rec_name = await self._start_bargein_rec()
+
             # Wait for playback to finish
             await self._wait_playback(pb_id)
             _cleanup(seg_path)
 
-            # Between-segment barge-in check
-            if check_bargein and i < len(segments) - 1:
-                check_path = await self._short_record_check()
+            # Check recording for speech (recording was running during playback)
+            if rec_name:
+                check_path = await self._finish_bargein_rec(rec_name)
                 if check_path is not None:
                     log.info(
-                        f"BARGE-IN after seg {i}/{len(segments)-1}: "
+                        f"BARGE-IN during seg {i}/{len(segments)-1}: "
                         f"[{text[:60]}]"
                     )
                     # Clean up remaining segment files
@@ -541,7 +546,6 @@ class CallHandler:
                     # Record the caller's full utterance
                     full_path = await self.record_caller()
                     if full_path and os.path.exists(full_path):
-                        # Merge the check recording + full recording
                         merged = f"{RECORD_DIR}/{self.call_id}_merged.wav"
                         _concat_wavs([check_path, full_path], merged)
                         _cleanup(check_path)
