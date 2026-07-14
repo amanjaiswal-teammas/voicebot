@@ -1,19 +1,11 @@
 #!/usr/bin/env python3
 """
-ARI-based voicebot handler with MixMonitor + Silero VAD barge-in.
+ARI-based voicebot handler with between-segment barge-in detection.
 
-MixMonitor (via AMI) captures caller-only audio in the background using
-Options 'b|r' (b=read-only direction + r=raw format). During TTS playback
-we poll the MixMonitor file for caller speech. If the caller speaks while
-the bot is talking, playback is stopped immediately and the caller's
-speech is processed.
-
-IMPORTANT: Asterisk MixMonitor options use PIPE separator (|), not comma.
-  ast_app_parse_options() splits on '|'.
-  b = read audio only (caller -> Asterisk)
-  r = raw PCM format (slinear 16-bit LE)
-  WRONG: 'ri' or 'r,i' -> no match -> mixed audio (both directions)
-  CORRECT: 'b|r' -> caller-only raw PCM
+Barge-in detection uses SHORT ARI RECORDINGS between TTS segments
+(the same approach as the working AGI voicebot.py). After each segment
+finishes playing, a brief recording checks if the caller is speaking.
+If speech is detected → stop playing remaining segments → process.
 
 Required: pip install aiohttp numpy silero-vad onnxruntime scipy
 
@@ -21,7 +13,7 @@ Asterisk config changes (see ari_setup/):
   http.conf     -> enable HTTP server on port 8088
   ari.conf      -> create 'voicebot' user with read=all write=all
   extensions.conf -> route calls to Stasis(voicebot)
-  manager.conf  -> enable AMI on port 5038 for MixMonitor
+  manager.conf  -> enable AMI on port 5038 (optional, for MixMonitor)
 """
 
 import asyncio
@@ -90,40 +82,6 @@ def _load_silero():
         _silero_model = False
 
 
-def _read_wav_samples(wav_path: str):
-    """Read WAV file, returns (samples_float32, rate) or (None, 0)."""
-    try:
-        import soundfile as sf
-        data, rate = sf.read(wav_path, dtype="float32")
-        if data.ndim > 1:
-            data = data.mean(axis=1)
-        return data, rate
-    except Exception:
-        pass
-    try:
-        with _wave.open(wav_path, "rb") as w:
-            nframes = w.getnframes()
-            rate = w.getframerate()
-            sw = w.getsampwidth()
-            if nframes == 0 or rate == 0:
-                return None, 0
-            raw = w.readframes(nframes)
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        return samples, rate
-    except Exception:
-        pass
-    try:
-        with open(wav_path, "rb") as f:
-            data = f.read()
-        if len(data) < 48:
-            return None, 0
-        raw = data[44:]
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        return samples, 8000
-    except Exception:
-        return None, 0
-
-
 def _check_speech_silero(wav_path: str) -> bool:
     """Return True if speech is detected in the WAV file."""
     _load_silero()
@@ -135,16 +93,29 @@ def _check_speech_silero(wav_path: str) -> bool:
         import torch
         get_speech_timestamps = _silero_utils
 
-        samples, rate = _read_wav_samples(wav_path)
-        if samples is None or len(samples) == 0:
+        try:
+            import soundfile as sf
+            data, rate = sf.read(wav_path, dtype="float32")
+            if data.ndim > 1:
+                data = data.mean(axis=1)
+        except Exception:
+            with _wave.open(wav_path, "rb") as w:
+                nframes = w.getnframes()
+                rate = w.getframerate()
+                if nframes == 0 or rate == 0:
+                    return False
+                raw = w.readframes(nframes)
+            data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+        if data is None or len(data) == 0:
             return False
 
         if rate != 16000:
             from scipy.signal import resample_poly
             g = int(np.gcd(16000, rate))
-            samples = resample_poly(samples, 16000 // g, rate // g).astype(np.float32)
+            data = resample_poly(data, 16000 // g, rate // g).astype(np.float32)
 
-        tensor = torch.from_numpy(samples)
+        tensor = torch.from_numpy(data)
         speech_ts = get_speech_timestamps(
             tensor, _silero_model,
             sampling_rate=16000,
@@ -163,64 +134,49 @@ def _check_speech_silero(wav_path: str) -> bool:
 def _check_speech_rms(wav_path: str) -> bool:
     """Simple RMS-based speech detection (fallback)."""
     try:
-        samples, rate = _read_wav_samples(wav_path)
-        if samples is None or len(samples) == 0 or rate == 0:
+        try:
+            import soundfile as sf
+            data, sr = sf.read(wav_path, dtype="float32")
+            if data.ndim > 1:
+                data = data.mean(axis=1)
+        except Exception:
+            with _wave.open(wav_path, "rb") as w:
+                nframes = w.getnframes()
+                sr = w.getframerate()
+                if nframes == 0 or sr == 0:
+                    return False
+                raw = w.readframes(nframes)
+            data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+        if data is None or len(data) == 0:
             return False
-        rms = float(np.sqrt(np.mean(samples ** 2)))
-        active = int(np.sum(np.abs(samples) > 0.005))
-        active_ms = active / rate * 1000
+
+        rms = float(np.sqrt(np.mean(data ** 2)))
+        active = int(np.sum(np.abs(data) > 0.005))
+        active_ms = active / sr * 1000
         log.info(f"RMS fallback: rms={rms:.5f} active_ms={active_ms:.0f}")
         return rms > 0.01 and active_ms > 100
     except Exception:
         return False
 
 
-def _has_speech_in_samples(samples: np.ndarray, rate: int,
-                           min_speech_ms: int = 100) -> bool:
-    """Check if float32 samples contain speech. Uses Silero VAD with RMS fallback."""
-    if samples is None or len(samples) == 0:
-        return False
-
-    rms = float(np.sqrt(np.mean(samples ** 2)))
-    if rms < 0.008:
-        return False
-
-    _load_silero()
-    if _silero_model is None or _silero_model is False:
-        active = int(np.sum(np.abs(samples) > 0.005))
-        active_ms = active / rate * 1000
-        return active_ms >= min_speech_ms
-
-    try:
-        import torch
-        from scipy.signal import resample_poly
-
-        min_samples_needed = int(rate * min_speech_ms / 1000)
-        if len(samples) < min_samples_needed:
-            return False
-
-        if rate != 16000:
-            g = int(np.gcd(16000, rate))
-            samples_16k = resample_poly(samples, 16000 // g, rate // g).astype(np.float32)
-        else:
-            samples_16k = samples
-
-        tensor = torch.from_numpy(samples_16k)
-        speech_ts = _silero_utils(
-            tensor, _silero_model,
-            sampling_rate=16000,
-            threshold=0.4,
-            min_speech_duration_ms=80,
-            min_silence_duration_ms=50,
-        )
-        total_ms = sum(s["end"] - s["start"] for s in speech_ts) * 1000 // 16000
-        log.info(f"VAD speech_ms={total_ms} rms={rms:.4f} samples={len(samples)}")
-        return total_ms >= min_speech_ms
-    except Exception as e:
-        log.warning(f"Silero error in _has_speech_in_samples: {e}")
-        active = int(np.sum(np.abs(samples) > 0.005))
-        active_ms = active / rate * 1000
-        return active_ms >= min_speech_ms
+def _concat_wavs(paths, output_path):
+    """Concatenate multiple WAV files into one."""
+    frames = []
+    rate = 8000
+    for p in paths:
+        try:
+            with _wave.open(p, "rb") as w:
+                frames.append(w.readframes(w.getnframes()))
+        except Exception:
+            pass
+    if not frames:
+        return
+    with _wave.open(output_path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(frames))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -283,13 +239,16 @@ class ARIClient:
         r = await self.get(f"/playbacks/{pid}")
         return r.get("state") if r else None
 
-    async def record(self, cid, name, fmt="wav", max_dur=10, max_sil=2):
+    async def record(self, cid, name, fmt="wav", max_dur=10, max_sil=2,
+                     terminateOn="#"):
         params = {
             "name": name, "format": fmt,
             "maxDurationSeconds": max_dur,
             "maxSilenceSeconds": max_sil,
-            "ifExists": "overwrite", "terminateOn": "#",
+            "ifExists": "overwrite",
         }
+        if terminateOn:
+            params["terminateOn"] = terminateOn
         return await self.post(f"/channels/{cid}/record", json=params)
 
     async def stop_live_recording(self, name):
@@ -303,7 +262,7 @@ class ARIClient:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  AMI client (for MixMonitor background caller-only audio capture)
+#  AMI client (optional, for MixMonitor)
 # ═══════════════════════════════════════════════════════════════════════
 
 AMI_HOST = "127.0.0.1"
@@ -313,8 +272,6 @@ AMI_PASS = "voicebot_secret"
 
 
 class AMIClient:
-    """Async AMI client — just enough to start/stop MixMonitor."""
-
     def __init__(self):
         self._reader = None
         self._writer = None
@@ -367,42 +324,6 @@ class AMIClient:
             pass
         return data
 
-    async def start_mixmonitor(self, channel_id: str, filepath: str):
-        """Start AMI MixMonitor capturing caller-only audio (read direction).
-
-        Options use PIPE separator (not comma): ast_app_parse_options splits on '|'.
-          b = read audio only (caller -> Asterisk direction)
-          r = raw PCM format (slinear 16-bit LE)
-        WRONG: 'ri' or 'r,i' -> parsed as single token -> no match -> mixed audio.
-        CORRECT: 'b|r' -> b=read-only, r=raw -> caller-only raw PCM.
-        """
-        if not self._connected:
-            return None
-        async with self._lock:
-            cmd = (
-                f"Action: MixMonitor\r\n"
-                f"Channel: {channel_id}\r\n"
-                f"File: {filepath}\r\n"
-                f"Options: b|r\r\n"
-                f"Replace: yes\r\n\r\n"
-            )
-            await self._send(cmd)
-            resp = await self._read_until(b"\r\n\r\n")
-            log.info(f"MixMonitor started: {filepath} resp={resp[:200]}")
-            return resp
-
-    async def stop_mixmonitor(self, channel_id: str):
-        """Stop MixMonitor on the channel."""
-        if not self._connected:
-            return
-        async with self._lock:
-            cmd = (
-                f"Action: StopMixMonitor\r\n"
-                f"Channel: {channel_id}\r\n\r\n"
-            )
-            await self._send(cmd)
-            await self._read_until(b"\r\n\r\n", timeout=1)
-
     async def close(self):
         try:
             if self._writer:
@@ -427,11 +348,14 @@ def _cleanup(path: str):
 class CallHandler:
     """Manages the conversation loop for a single call.
 
-    Barge-in detection works by polling the MixMonitor raw PCM file
-    DURING TTS playback. Since MixMonitor uses 'b|r' (caller-only),
-    any audio in the file while the bot is playing TTS must be from
-    the caller. We detect speech via Silero VAD (RMS fallback) and
-    immediately stop playback when the caller interrupts.
+    Barge-in detection uses SHORT ARI RECORDINGS between TTS segments,
+    matching the approach used by the working AGI voicebot.py:
+
+    1. Play a TTS segment via ARI (waits for completion)
+    2. After segment finishes, do a brief ARI recording (300ms)
+    3. Check the recording for speech via Silero VAD
+    4. If speech detected → barge-in → record full utterance → process
+    5. If no speech → play next segment
     """
 
     def __init__(self, ari: ARIClient, channel_id: str, args: list,
@@ -442,13 +366,6 @@ class CallHandler:
         self.args = args
         self.call_id = str(uuid.uuid4())
         self._http: aiohttp.ClientSession = None
-        mix_id = args[0] if args else self.call_id
-        self._mix_path = f"/tmp/{mix_id}_caller"
-        self._mix_offset = 0
-        self._mix_rate = 8000
-        self._mix_active = False
-        self._last_bargein_samples = None
-        self._last_bargein_rate = 8000
 
     # ── Backend API ─────────────────────────────────────────────
 
@@ -471,146 +388,6 @@ class CallHandler:
             segs = data.get("segments", [])
             log.info(f"API returned {len(segs)} segments")
             return data
-
-    # ── MixMonitor management ──────────────────────────────────
-
-    async def _start_mixmonitor(self):
-        """Start AMI MixMonitor to capture caller-only audio in the background.
-
-        Uses 'b|r' (caller-only raw PCM). With 'Replace: yes' this
-        replaces any existing MixMonitor (e.g. from the dialplan).
-        """
-        resp = await self.ami.start_mixmonitor(
-            self.channel_id, self._mix_path
-        )
-        self._mix_active = True
-        await asyncio.sleep(0.3)
-        raw_path = self._mix_path + ".raw"
-        if os.path.exists(raw_path):
-            log.info(f"MixMonitor file exists: {raw_path} "
-                     f"({os.path.getsize(raw_path)} bytes)")
-        else:
-            log.warning(f"MixMonitor file NOT found: {raw_path}")
-
-    async def _stop_mixmonitor(self):
-        self._mix_active = False
-        await self.ami.stop_mixmonitor(self.channel_id)
-
-    def _get_mixmonitor_offset(self) -> int:
-        """Return current MixMonitor file size (used as start offset)."""
-        try:
-            raw_path = self._mix_path + ".raw"
-            if os.path.exists(raw_path):
-                return os.path.getsize(raw_path)
-        except Exception:
-            pass
-        return 0
-
-    def _read_mixmonitor_from(self, offset: int):
-        """Read all audio from offset to current end of file.
-
-        Returns float32 samples at native rate, or None if no new data.
-        Does NOT update self._mix_offset (non-destructive).
-        """
-        try:
-            raw_path = self._mix_path + ".raw"
-            if not os.path.exists(raw_path):
-                return None
-            size = os.path.getsize(raw_path)
-            if size <= offset:
-                return None
-            with open(raw_path, "rb") as f:
-                f.seek(offset)
-                data = f.read()
-            if len(data) < 160:
-                return None
-            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            return samples
-        except Exception as e:
-            log.warning(f"MixMonitor read error: {e}")
-            return None
-
-    def _check_bargein_from_offset(self, start_offset: int,
-                                   min_speech_ms: int = 100) -> bool:
-        """Check if caller has spoken since start_offset.
-
-        Reads all accumulated audio from start_offset to current file end
-        and runs speech detection. Does NOT update self._mix_offset.
-        Returns True if speech detected (caller barge-in).
-        """
-        samples = self._read_mixmonitor_from(start_offset)
-        if samples is None or len(samples) == 0:
-            return False
-
-        rate = self._mix_rate or 8000
-        rms = float(np.sqrt(np.mean(samples ** 2)))
-        duration_ms = len(samples) / rate * 1000
-        log.debug(
-            f"BARGEIN-DURING: {len(samples)} samples "
-            f"({duration_ms:.0f}ms @{rate}Hz) rms={rms:.5f}"
-        )
-
-        if rms < 0.008:
-            return False
-
-        # Cap to last 3 seconds to avoid stale accumulated audio
-        max_samples = rate * 3
-        if len(samples) > max_samples:
-            samples = samples[-max_samples:]
-
-        # Store for saving later
-        self._last_bargein_samples = samples
-        self._last_bargein_rate = rate
-
-        return _has_speech_in_samples(samples, rate, min_speech_ms)
-
-    def _save_bargein_audio(self):
-        """Save the barge-in audio chunk as a WAV file for STT."""
-        samples = getattr(self, "_last_bargein_samples", None)
-        rate = getattr(self, "_last_bargein_rate", 8000)
-        if samples is None or len(samples) == 0:
-            return None
-        out = f"{RECORD_DIR}/{self.call_id}_bargein.wav"
-        pcm = (samples * 32768).astype(np.int16).tobytes()
-        with _wave.open(out, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(rate)
-            wf.writeframes(pcm)
-        log.info(f"Bargein audio saved: {out} ({os.path.getsize(out)} bytes)")
-        return out
-
-    def _save_mixmonitor_from(self, start_offset: int) -> str:
-        """Save all MixMonitor audio from start_offset to current end as WAV.
-
-        Returns the WAV path or None if no data.
-        """
-        try:
-            raw_path = self._mix_path + ".raw"
-            if not os.path.exists(raw_path):
-                return None
-            size = os.path.getsize(raw_path)
-            if size <= start_offset:
-                return None
-            with open(raw_path, "rb") as f:
-                f.seek(start_offset)
-                data = f.read()
-            if len(data) < 200:
-                return None
-
-            rate = self._mix_rate or 8000
-            out = f"{RECORD_DIR}/{self.call_id}_bargein_full.wav"
-            with _wave.open(out, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(rate)
-                wf.writeframes(data)
-            self._mix_offset = size
-            log.info(f"MixMonitor saved: {out} ({len(data)} bytes)")
-            return out
-        except Exception as e:
-            log.warning(f"Save MixMonitor error: {e}")
-            return None
 
     # ── Play one segment ────────────────────────────────────────
 
@@ -649,34 +426,87 @@ class CallHandler:
         return True, text, pb_id
 
     async def _wait_playback(self, pb_id: str, timeout: float = 30.0):
-        """Poll until playback completes or fails."""
+        """Poll until playback completes or ARI cleans it up."""
         checks = 0
         deadline = time.time() + timeout
         while time.time() < deadline:
             await asyncio.sleep(0.1)
-            state = await self.ari.playback_state(pb_id)
+            try:
+                state = await self.ari.playback_state(pb_id)
+            except Exception:
+                return
             checks += 1
             if checks <= 3 or checks % 10 == 0:
                 log.info(f"Playback {pb_id}: state={state} check={checks}")
             if state in ("done", "failed", None):
                 return
-        log.warning(f"Playback {pb_id} timed out after {timeout}s (state={state})")
+        log.warning(f"Playback {pb_id} timed out after {timeout}s")
 
-    # ── Play all segments with REAL-TIME barge-in detection ──────
+    # ── Short recording check (between segments) ────────────────
+
+    async def _short_record_check(self, duration: float = 0.4) -> str:
+        """Do a brief ARI recording between segments to detect barge-in.
+
+        This matches the AGI version's detect_voice_bargein() which does
+        a 400ms RECORD FILE between segments. After the bot finishes
+        playing a segment, any audio on the channel must be from the
+        caller (since the bot is silent). If we detect speech, the
+        caller is trying to interrupt.
+
+        Returns WAV path if speech detected, None otherwise.
+        """
+        rec_name = f"{self.call_id}_chk_{int(time.time() * 1000)}"
+        result = await self.ari.record(
+            self.channel_id, rec_name,
+            max_dur=5, max_sil=2, terminateOn=None,
+        )
+        if result is None:
+            log.warning(f"Short check: record start failed for {rec_name}")
+            return None
+
+        # Wait briefly to capture any immediate caller speech
+        await asyncio.sleep(duration)
+
+        # Stop the recording to free the channel
+        try:
+            await self.ari.stop_live_recording(rec_name)
+        except Exception:
+            pass
+
+        # Brief pause for file flush
+        await asyncio.sleep(0.2)
+
+        # Retrieve the recording
+        raw = await self.ari.get_recording(rec_name)
+        if raw is None or len(raw) < 200:
+            log.info(f"Short check: {rec_name} empty ({len(raw) if raw else 0} bytes)")
+            return None
+
+        out = f"{RECORD_DIR}/{rec_name}.wav"
+        with open(out, "wb") as f:
+            f.write(raw)
+
+        # Check for speech
+        speech = _check_speech_silero(out)
+        if speech:
+            log.info(f"Short check: SPEECH DETECTED ({len(raw)} bytes)")
+            return out
+        else:
+            log.info(f"Short check: no speech ({len(raw)} bytes)")
+            _cleanup(out)
+            return None
+
+    # ── Play all segments with barge-in detection ───────────────
 
     async def play_segments(self, segments: list, check_bargein: bool = True):
-        """Play all segments; return (interrupted_text, recording_path).
+        """Play all segments; return (interrupted_text, bargein_recording_path).
 
-        When check_bargein is True, we poll the MixMonitor file DURING
-        each segment's playback (every 200ms). Since MixMonitor uses
-        'b|r' (caller-only), any audio in the file during playback must
-        be from the caller. If speech is detected → stop playback
-        immediately, save the audio, and return.
+        Barge-in detection: after each segment finishes, do a short ARI
+        recording to check if the caller is speaking. This matches the
+        AGI version's approach (400ms RECORD between segments).
 
-        We do NOT rely on ARI playback state for timing — ARI cleans up
-        playback objects immediately after completion, making state
-        polling unreliable. Instead we calculate the expected duration
-        from the WAV file and monitor for the full duration.
+        If barge-in detected → record the caller's full utterance →
+        return the merged recording for STT processing.
         """
         interrupted_text = None
         bargein_recording = None
@@ -689,98 +519,42 @@ class CallHandler:
             if pb_id is None:
                 continue
 
-            if check_bargein and self._mix_active:
-                # Snapshot MixMonitor offset BEFORE monitoring.
-                # With 'b|r' (caller-only), any new audio after this
-                # point MUST be from the caller (bot TTS is not captured).
-                start_offset = self._get_mixmonitor_offset()
-                log.info(f"BARGEIN-DURING seg {i}: monitoring from offset {start_offset}")
+            # Wait for playback to finish
+            await self._wait_playback(pb_id)
+            _cleanup(seg_path)
 
-                # Calculate expected duration from WAV file
-                try:
-                    with _wave.open(seg_path, "rb") as wf:
-                        seg_duration = wf.getnframes() / max(wf.getframerate(), 1)
-                except Exception:
-                    seg_duration = 5.0  # fallback
-
-                bargein_detected = False
-                # Monitor for the full segment duration + buffer
-                deadline = time.time() + seg_duration + 1.0
-                poll_count = 0
-
-                while time.time() < deadline:
-                    await asyncio.sleep(0.2)
-                    poll_count += 1
-
-                    # ── Check barge-in FIRST (before playback state) ──
-                    # This is critical: ARI cleans up playback objects
-                    # immediately, so state returns None. We must check
-                    # barge-in before that happens.
-                    if self._check_bargein_from_offset(
-                        start_offset, min_speech_ms=100
-                    ):
-                        bargein_detected = True
-                        break
-
-                    # ── Check if playback finished (optional early exit) ──
-                    try:
-                        state = await self.ari.playback_state(pb_id)
-                        if state in ("done", "failed"):
-                            log.info(f"Playback seg {i} finished (state={state})")
-                            break
-                        # state=None means ARI cleaned it up — playback
-                        # likely done, but keep checking barge-in until
-                        # deadline to catch any late-arriving audio.
-                        if state is None and poll_count > 3:
-                            break
-                    except Exception:
-                        break
-
-                log.info(f"BARGEIN-DURING seg {i}: monitored {poll_count} polls, "
-                         f"detected={bargein_detected}")
-
-                # Clean up this segment's file
-                _cleanup(seg_path)
-
-                if bargein_detected:
+            # Between-segment barge-in check
+            if check_bargein and i < len(segments) - 1:
+                check_path = await self._short_record_check()
+                if check_path is not None:
                     log.info(
-                        f"BARGE-IN DETECTED during seg {i}/{len(segments)-1}: "
+                        f"BARGE-IN after seg {i}/{len(segments)-1}: "
                         f"[{text[:60]}]"
                     )
-                    # Stop remaining playback immediately
-                    try:
-                        await self.ari.stop_playback(pb_id)
-                    except Exception:
-                        pass
-
-                    # Wait briefly for caller to finish their utterance,
-                    # then save all audio from the barge-in offset
-                    await asyncio.sleep(1.5)
-                    bargein_recording = self._save_mixmonitor_from(start_offset)
-
-                    # If MixMonitor save failed, use stored samples
-                    if bargein_recording is None:
-                        bargein_recording = self._save_bargein_audio()
-
                     # Clean up remaining segment files
                     for j in range(i + 1, len(segments)):
                         _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav")
+
+                    # Record the caller's full utterance
+                    full_path = await self.record_caller()
+                    if full_path and os.path.exists(full_path):
+                        # Merge the check recording + full recording
+                        merged = f"{RECORD_DIR}/{self.call_id}_merged.wav"
+                        _concat_wavs([check_path, full_path], merged)
+                        _cleanup(check_path)
+                        _cleanup(full_path)
+                        bargein_recording = merged
+                        log.info(f"Merged barge-in: {merged}")
+                    else:
+                        bargein_recording = check_path
                     break
-            else:
-                # No barge-in checking — just wait for playback to finish
-                await self._wait_playback(pb_id)
-                _cleanup(seg_path)
 
         return interrupted_text, bargein_recording
 
     # ── Full caller recording ───────────────────────────────────
 
     async def record_caller(self) -> str:
-        """Record the caller and return the WAV path (or None).
-
-        Uses ARI recording with silence detection. The caller speaks
-        after the bot finishes talking, so this captures their response.
-        """
+        """Record the caller and return the WAV path (or None)."""
         rec_name = f"{self.call_id}_caller"
         result = await self.ari.record(
             self.channel_id, rec_name, max_dur=10, max_sil=2
@@ -812,27 +586,10 @@ class CallHandler:
     # ── Main conversation loop ──────────────────────────────────
 
     async def run(self):
-        log.info(f"CALL={self.call_id} CHAN={self.channel_id} START mix={self._mix_path}")
+        log.info(f"CALL={self.call_id} CHAN={self.channel_id} START")
         self._http = aiohttp.ClientSession()
         try:
             await self.ari.answer(self.channel_id)
-
-            # Dialplan starts MixMonitor with 'b|r' (caller-only) before
-            # entering Stasis. Do NOT start a second MixMonitor via AMI —
-            # 'Replace: yes' would kill the working dialplan one, and the
-            # replacement often fails with "Cannot open" errors.
-            # Just verify the dialplan's MixMonitor file exists.
-            await asyncio.sleep(0.5)
-            raw_path = self._mix_path + ".raw"
-            if os.path.exists(raw_path):
-                self._mix_active = True
-                log.info(f"Dialplan MixMonitor file found: {raw_path} "
-                         f"({os.path.getsize(raw_path)} bytes)")
-            else:
-                # Fallback: start via AMI if dialplan didn't
-                log.warning(f"MixMonitor file not found: {raw_path}, "
-                            f"starting via AMI")
-                await self._start_mixmonitor()
 
             # ── Greeting ────────────────────────────────────────
             data = await self._api()
@@ -840,7 +597,7 @@ class CallHandler:
                 await self.ari.hangup(self.channel_id)
                 return
 
-            # Play greeting WITH barge-in detection enabled.
+            # Play greeting with barge-in detection.
             # Customer can interrupt the greeting just like in AGI mode.
             interrupted_text, bargein_rec = await self.play_segments(
                 data.get("segments", []), check_bargein=True
@@ -937,7 +694,7 @@ async def _events_loop(ari: ARIClient, ami: AMIClient):
 
 async def main():
     log.info("=" * 50)
-    log.info("Starting voicebot ARI+AMI handler (real-time barge-in)")
+    log.info("Starting voicebot ARI handler (between-segment barge-in)")
     log.info("=" * 50)
 
     _load_silero()
@@ -956,7 +713,7 @@ async def main():
     except Exception as e:
         log.error(f"Cannot write to PLAYBACK_DIR {PLAYBACK_DIR}: {e}")
 
-    # Connect AMI (for MixMonitor)
+    # Connect AMI (optional, kept for future use)
     ami = AMIClient()
     await ami.connect()
 
