@@ -673,14 +673,16 @@ class CallHandler:
         be from the caller. If speech is detected → stop playback
         immediately, save the audio, and return.
 
-        This provides ~200ms reaction time for customer interrupts,
-        matching the AGI version's DTMF interrupt behavior but for
-        voice barge-in.
+        We do NOT rely on ARI playback state for timing — ARI cleans up
+        playback objects immediately after completion, making state
+        polling unreliable. Instead we calculate the expected duration
+        from the WAV file and monitor for the full duration.
         """
         interrupted_text = None
         bargein_recording = None
 
         for i, seg in enumerate(segments):
+            seg_path = f"{PLAYBACK_DIR}/{self.call_id}_seg_{i}.wav"
             ok, text, pb_id = await self._play_segment(seg, i)
             interrupted_text = text
 
@@ -688,33 +690,57 @@ class CallHandler:
                 continue
 
             if check_bargein and self._mix_active:
-                # Snapshot MixMonitor offset BEFORE we start monitoring.
-                # Any new audio after this point is caller speech
-                # (since bot TTS doesn't go to MixMonitor with 'b' flag).
+                # Snapshot MixMonitor offset BEFORE monitoring.
+                # With 'b|r' (caller-only), any new audio after this
+                # point MUST be from the caller (bot TTS is not captured).
                 start_offset = self._get_mixmonitor_offset()
                 log.info(f"BARGEIN-DURING seg {i}: monitoring from offset {start_offset}")
 
+                # Calculate expected duration from WAV file
+                try:
+                    with _wave.open(seg_path, "rb") as wf:
+                        seg_duration = wf.getnframes() / max(wf.getframerate(), 1)
+                except Exception:
+                    seg_duration = 5.0  # fallback
+
                 bargein_detected = False
-                deadline = time.time() + 30  # max segment duration
+                # Monitor for the full segment duration + buffer
+                deadline = time.time() + seg_duration + 1.0
+                poll_count = 0
 
                 while time.time() < deadline:
                     await asyncio.sleep(0.2)
+                    poll_count += 1
 
-                    # Check if playback finished normally
-                    state = await self.ari.playback_state(pb_id)
-                    if state in ("done", "failed", None):
-                        log.info(f"Playback seg {i} finished (state={state})")
-                        break
-
-                    # Check MixMonitor for caller speech during playback
+                    # ── Check barge-in FIRST (before playback state) ──
+                    # This is critical: ARI cleans up playback objects
+                    # immediately, so state returns None. We must check
+                    # barge-in before that happens.
                     if self._check_bargein_from_offset(
                         start_offset, min_speech_ms=100
                     ):
                         bargein_detected = True
                         break
 
+                    # ── Check if playback finished (optional early exit) ──
+                    try:
+                        state = await self.ari.playback_state(pb_id)
+                        if state in ("done", "failed"):
+                            log.info(f"Playback seg {i} finished (state={state})")
+                            break
+                        # state=None means ARI cleaned it up — playback
+                        # likely done, but keep checking barge-in until
+                        # deadline to catch any late-arriving audio.
+                        if state is None and poll_count > 3:
+                            break
+                    except Exception:
+                        break
+
+                log.info(f"BARGEIN-DURING seg {i}: monitored {poll_count} polls, "
+                         f"detected={bargein_detected}")
+
                 # Clean up this segment's file
-                _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{i}.wav")
+                _cleanup(seg_path)
 
                 if bargein_detected:
                     log.info(
@@ -729,7 +755,7 @@ class CallHandler:
 
                     # Wait briefly for caller to finish their utterance,
                     # then save all audio from the barge-in offset
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.5)
                     bargein_recording = self._save_mixmonitor_from(start_offset)
 
                     # If MixMonitor save failed, use stored samples
@@ -743,7 +769,7 @@ class CallHandler:
             else:
                 # No barge-in checking — just wait for playback to finish
                 await self._wait_playback(pb_id)
-                _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{i}.wav")
+                _cleanup(seg_path)
 
         return interrupted_text, bargein_recording
 
@@ -791,10 +817,22 @@ class CallHandler:
         try:
             await self.ari.answer(self.channel_id)
 
-            # Start MixMonitor via AMI with 'b|r' (caller-only).
-            # This replaces any existing MixMonitor from the dialplan,
-            # ensuring we only capture caller audio (not bot TTS).
-            await self._start_mixmonitor()
+            # Dialplan starts MixMonitor with 'b|r' (caller-only) before
+            # entering Stasis. Do NOT start a second MixMonitor via AMI —
+            # 'Replace: yes' would kill the working dialplan one, and the
+            # replacement often fails with "Cannot open" errors.
+            # Just verify the dialplan's MixMonitor file exists.
+            await asyncio.sleep(0.5)
+            raw_path = self._mix_path + ".raw"
+            if os.path.exists(raw_path):
+                self._mix_active = True
+                log.info(f"Dialplan MixMonitor file found: {raw_path} "
+                         f"({os.path.getsize(raw_path)} bytes)")
+            else:
+                # Fallback: start via AMI if dialplan didn't
+                log.warning(f"MixMonitor file not found: {raw_path}, "
+                            f"starting via AMI")
+                await self._start_mixmonitor()
 
             # ── Greeting ────────────────────────────────────────
             data = await self._api()
