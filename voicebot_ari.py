@@ -466,11 +466,11 @@ class CallHandler:
             log.warning(f"Short check: record start failed for {rec_name}")
             return None
 
-        # Wait for the recording to complete naturally (maxDurationSeconds=1)
-        await asyncio.sleep(1.5)
+        # Recording finishes in ~0.1-0.3s (Asterisk "Took too long" kills it early).
+        # Short initial wait + fast poll keeps total overhead ~0.3-0.5s.
+        await asyncio.sleep(0.3)
 
-        # Poll until recording disappears from live (stored) or times out
-        for _ in range(10):
+        for _ in range(20):  # up to 2.0s total
             r = await self.ari.get(f"/recordings/live/{rec_name}")
             if r is None:
                 break
