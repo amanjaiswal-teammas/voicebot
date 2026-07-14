@@ -1,12 +1,15 @@
 from .stt import transcribe
 from .llm import ask_llm
 from .supertonic_engine import speak
+from .language import detect_language
 from .memory import (
     get_history,
     add_message
 )
 from .session_store import sessions
 import time
+
+SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na"}
 
 
 def process_call(
@@ -32,6 +35,9 @@ def process_call(
         caller_text = stt_result["text"]
 
         lang = stt_result["language"]
+
+        if lang not in SUPERTONIC_LANGS:
+            lang = detect_language(caller_text)
 
         print("WHISPER LANG:", lang)
 
