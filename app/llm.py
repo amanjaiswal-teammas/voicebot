@@ -9,24 +9,12 @@ SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
 def ask_llm(messages, lang="en"):
 
-    lang_instruction = (
-        "Customer language: hi (Hindi/Hinglish). "
-        "Respond in Hinglish."
-        if lang == "hi"
-        else "Customer language: en (English). "
-             "Respond in English."
-    )
-
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {
                 "role": "system",
                 "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "system",
-                "content": lang_instruction
             }
         ] + messages,
         "stream": False,
