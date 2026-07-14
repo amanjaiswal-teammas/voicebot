@@ -500,20 +500,25 @@ class CallHandler:
     # ── Play all segments with barge-in detection ───────────────
 
     async def play_segments(self, segments: list, check_bargein: bool = True):
-        """Play all segments with live barge-in detection.
+        """Play all segments back-to-back with zero gaps.
 
-        For each segment:
-          1. Start ARI recording DURING playback (captures caller audio)
-          2. Wait for playback to finish
-          3. Check recording for speech
+        One continuous recording runs during the ENTIRE playback.
+        After ALL segments finish, check the recording for speech.
+        This keeps playback smooth (no inter-segment dead air)
+        while still detecting barge-in.
 
-        This way barge-in is detected WHILE the bot speaks, not after.
         ARI recordings capture read-direction audio (caller mic),
-        so the bot's playback doesn't interfere.
+        so the bot's playback doesn't interfere with detection.
         """
         interrupted_text = None
         bargein_recording = None
 
+        # Start ONE recording that spans the entire playback
+        rec_name = None
+        if check_bargein:
+            rec_name = await self._start_bargein_rec()
+
+        # Play ALL segments back-to-back (no gaps)
         for i, seg in enumerate(segments):
             seg_path = f"{PLAYBACK_DIR}/{self.call_id}_seg_{i}.wav"
             ok, text, pb_id = await self._play_segment(seg, i)
@@ -522,39 +527,25 @@ class CallHandler:
             if pb_id is None:
                 continue
 
-            # Start barge-in recording DURING playback
-            rec_name = None
-            if check_bargein:
-                rec_name = await self._start_bargein_rec()
-
-            # Wait for playback to finish
             await self._wait_playback(pb_id)
             _cleanup(seg_path)
 
-            # Check recording for speech (recording was running during playback)
-            if rec_name:
-                check_path = await self._finish_bargein_rec(rec_name)
-                if check_path is not None:
-                    log.info(
-                        f"BARGE-IN during seg {i}/{len(segments)-1}: "
-                        f"[{text[:60]}]"
-                    )
-                    # Clean up remaining segment files
-                    for j in range(i + 1, len(segments)):
-                        _cleanup(f"{PLAYBACK_DIR}/{self.call_id}_seg_{j}.wav")
+        # After ALL segments done, check the single recording
+        if rec_name:
+            check_path = await self._finish_bargein_rec(rec_name)
+            if check_path is not None:
+                log.info(f"BARGE-IN detected: [{interrupted_text[:60]}]")
 
-                    # Record the caller's full utterance
-                    full_path = await self.record_caller()
-                    if full_path and os.path.exists(full_path):
-                        merged = f"{RECORD_DIR}/{self.call_id}_merged.wav"
-                        _concat_wavs([check_path, full_path], merged)
-                        _cleanup(check_path)
-                        _cleanup(full_path)
-                        bargein_recording = merged
-                        log.info(f"Merged barge-in: {merged}")
-                    else:
-                        bargein_recording = check_path
-                    break
+                full_path = await self.record_caller()
+                if full_path and os.path.exists(full_path):
+                    merged = f"{RECORD_DIR}/{self.call_id}_merged.wav"
+                    _concat_wavs([check_path, full_path], merged)
+                    _cleanup(check_path)
+                    _cleanup(full_path)
+                    bargein_recording = merged
+                    log.info(f"Merged barge-in: {merged}")
+                else:
+                    bargein_recording = check_path
 
         return interrupted_text, bargein_recording
 
