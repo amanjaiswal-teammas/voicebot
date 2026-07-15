@@ -170,6 +170,8 @@ async def voice_audio_segmented(
     if not call_id:
         call_id = create_session()
 
+    print(f"SEG-API: call_id={call_id} outbound={outbound} interrupted_text='{interrupted_text}'")
+
     if outbound:
         add_message(call_id, "assistant", GREETING_TEXT)
         data = json.loads(_cached_greeting_segments)
@@ -218,6 +220,7 @@ async def voice_audio_segmented(
     lang = result.get("lang", "en")
 
     if not bot_text or not bot_text.strip():
+        print(f"API: empty bot_text → hangup=True")
         return Response(
             content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
             media_type="application/json",
@@ -237,6 +240,7 @@ async def voice_audio_segmented(
         })
 
     resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
+    print(f"API RESPONSE: hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
     return Response(
         content=json.dumps(resp),
         media_type="application/json",

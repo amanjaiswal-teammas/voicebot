@@ -158,6 +158,7 @@ def process_call(
     )
 
     print("BOT:", answer)
+    print(f"LLM_HANGUP={hangup}")
 
     if not hangup:
         goodbye_words_en = ["have a great day", "have a nice day", "have a good day"]
@@ -205,7 +206,7 @@ def process_call(
         "ms"
     )
 
-    return {
+    result = {
         "call_id": call_id,
         "caller": caller_text,
         "bot": answer,
@@ -213,3 +214,5 @@ def process_call(
         "hangup": hangup,
         "lang": lang,
     }
+    print(f"PROCESS_CALL RETURN: hangup={hangup} lang={lang} bot_len={len(answer)}")
+    return result

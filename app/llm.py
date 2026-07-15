@@ -28,9 +28,12 @@ ENGLISH_INSTRUCTION = (
 
 
 def _clean_hinglish(text):
-    text = re.sub(r'[\u0900-\u097F]+', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    cleaned = re.sub(r'[\u0900-\u097F]+', ' ', text)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if not cleaned:
+        print(f"WARN: _clean_hinglish stripped ALL text from: {text[:100]}")
+        return text
+    return cleaned
 
 
 def ask_llm(messages, lang="en"):
@@ -93,7 +96,11 @@ def ask_llm(messages, lang="en"):
         flags=re.S
     ).strip()
 
+    print(f"LLM RAW: {answer}")
+
     hangup = "[END]" in answer
+    if hangup:
+        print("LLM: [END] tag detected — hangup=True")
     answer = answer.replace("[END]", "").strip()
 
     if lang == "hi":
