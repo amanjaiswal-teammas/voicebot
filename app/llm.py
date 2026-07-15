@@ -9,10 +9,15 @@ SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 HINDI_INSTRUCTION = (
     "\n\n== ACTIVE LANGUAGE CONTEXT ==\n"
     "The customer is speaking Hindi/Hinglish. "
-    "You MUST respond in Hinglish (Hindi words written in Roman/English script). "
-    "Example: 'Aapka order confirm ho gaya hai' — NOT 'Your order is confirmed'. "
-    "Do NOT use English sentences. Do NOT use Devanagari script. "
-    "Keep using Hinglish for the ENTIRE conversation until the customer switches language."
+    "You MUST respond in Hinglish = Hindi words written in Roman/English script ONLY.\n"
+    "CORRECT: 'Aapka order confirm ho gaya hai'\n"
+    "WRONG: 'Your order is confirmed' (this is English)\n"
+    "WRONG: 'आपका ऑर्डर कन्फर्म हो गया है' (this is Devanagari)\n\n"
+    "STRICT RULES:\n"
+    "- Use ONLY Roman/English letters. NEVER use Devanagari script (हिंदी characters like क, ख, ग).\n"
+    "- Do NOT start sentences with English words like 'Great', 'Sure', 'Okay', 'Yes'.\n"
+    "- Use Hinglish equivalents: 'Bilkul', 'Achha', 'Theek hai', 'Haan'.\n"
+    "- Keep using Hinglish for the ENTIRE conversation until the customer switches to English.\n"
 )
 
 ENGLISH_INSTRUCTION = (
@@ -20,6 +25,12 @@ ENGLISH_INSTRUCTION = (
     "The customer is speaking English. "
     "You MUST respond in English. Do NOT use Hindi or Hinglish words."
 )
+
+
+def _clean_hinglish(text):
+    text = re.sub(r'[\u0900-\u097F]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 def ask_llm(messages, lang="en"):
@@ -84,5 +95,8 @@ def ask_llm(messages, lang="en"):
 
     hangup = "[END]" in answer
     answer = answer.replace("[END]", "").strip()
+
+    if lang == "hi":
+        answer = _clean_hinglish(answer)
 
     return answer, hangup
