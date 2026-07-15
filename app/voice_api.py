@@ -26,8 +26,17 @@ GREETING_TEXT = (
     "May I tell you more about it?"
 )
 
+GREETING_TEXT_HI = (
+    "Good morning! BellaVita se bol rahe hain. "
+    "Aapne cart mein product add kiya hai "
+    "aur aapke liye exclusive discount hai. "
+    "Sunna chahenge?"
+)
+
 _cached_greeting_ulaw: Optional[bytes] = None
 _cached_greeting_segments: Optional[str] = None
+_cached_greeting_ulaw_hi: Optional[bytes] = None
+_cached_greeting_segments_hi: Optional[str] = None
 
 app = FastAPI()
 
@@ -71,19 +80,20 @@ def _audio_to_ulaw(input_path: str) -> bytes:
 
 def _preload_greeting():
     global _cached_greeting_ulaw, _cached_greeting_segments
+    global _cached_greeting_ulaw_hi, _cached_greeting_segments_hi
     from .supertonic_engine import get_tts, speak
 
     print("PRELOAD: Loading TTS model...")
     get_tts()
     print("PRELOAD: TTS model ready.")
 
-    path = f"{AUDIO_DIR}/_greeting.wav"
-    if not os.path.exists(path):
-        print("PRELOAD: Generating greeting TTS...")
-        speak(GREETING_TEXT, path, "en")
-    _cached_greeting_ulaw = _audio_to_ulaw(path)
+    path_en = f"{AUDIO_DIR}/_greeting_en.wav"
+    if not os.path.exists(path_en):
+        print("PRELOAD: Generating English greeting TTS...")
+        speak(GREETING_TEXT, path_en, "en")
+    _cached_greeting_ulaw = _audio_to_ulaw(path_en)
 
-    print("PRELOAD: Preloading greeting segments...")
+    print("PRELOAD: Preloading English greeting segments...")
     segs = speak_segments(GREETING_TEXT, "en", prefix="greeting")
     segments_json = []
     for text, seg_path in segs:
@@ -96,7 +106,28 @@ def _preload_greeting():
     _cached_greeting_segments = json.dumps(
         {"call_id": "", "segments": segments_json, "hangup": False}
     )
-    print("PRELOAD: Greeting cached (µ-law + segments).")
+
+    path_hi = f"{AUDIO_DIR}/_greeting_hi.wav"
+    if not os.path.exists(path_hi):
+        print("PRELOAD: Generating Hindi greeting TTS...")
+        speak(GREETING_TEXT_HI, path_hi, "en")
+    _cached_greeting_ulaw_hi = _audio_to_ulaw(path_hi)
+
+    print("PRELOAD: Preloading Hindi greeting segments...")
+    segs_hi = speak_segments(GREETING_TEXT_HI, "en", prefix="greeting_hi")
+    segments_json_hi = []
+    for text, seg_path in segs_hi:
+        ulaw_bytes = _audio_to_ulaw(seg_path)
+        os.remove(seg_path)
+        segments_json_hi.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+    _cached_greeting_segments_hi = json.dumps(
+        {"call_id": "", "segments": segments_json_hi, "hangup": False}
+    )
+
+    print("PRELOAD: All greetings cached.")
 
 
 @app.on_event("startup")
@@ -192,7 +223,10 @@ async def voice_audio_segmented(
             media_type="application/json",
         )
 
-    segs = speak_segments(bot_text, lang, prefix=call_id)
+    from .conversation import _get_tts_lang
+    tts_lang = _get_tts_lang(lang, bot_text)
+
+    segs = speak_segments(bot_text, tts_lang, prefix=call_id)
     segments_json = []
     for text, path in segs:
         ulaw_bytes = _audio_to_ulaw(path)

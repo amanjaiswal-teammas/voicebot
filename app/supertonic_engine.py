@@ -87,6 +87,10 @@ def speak_segments(text, lang="en", prefix=""):
     return paths
 
 
+def _has_devanagari(text):
+    return bool(re.search(r'[\u0900-\u097F]', text))
+
+
 def _normalize_for_tts(text):
     text = re.sub(r'\bRs\b', 'Rupees', text, flags=re.IGNORECASE)
     text = re.sub(r'(?<=\d),(?=\d)', '', text)
@@ -101,6 +105,9 @@ def speak(text, output_file, lang="en"):
         raise Exception(
             "Empty text received for TTS"
         )
+
+    if not _has_devanagari(text) and lang == "hi":
+        lang = "en"
 
     if lang not in AVAILABLE_LANGS:
         lang = "en"

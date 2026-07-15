@@ -6,30 +6,41 @@ from .bellavita_prompt import SYSTEM_PROMPT as BP_SYSTEM_PROMPT
 
 SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
+HINDI_INSTRUCTION = (
+    "\n\n== ACTIVE LANGUAGE CONTEXT ==\n"
+    "The customer is speaking Hindi/Hinglish. "
+    "You MUST respond in Hinglish (Hindi words written in Roman/English script). "
+    "Example: 'Aapka order confirm ho gaya hai' — NOT 'Your order is confirmed'. "
+    "Do NOT use English sentences. Do NOT use Devanagari script. "
+    "Keep using Hinglish for the ENTIRE conversation until the customer switches language."
+)
+
+ENGLISH_INSTRUCTION = (
+    "\n\n== ACTIVE LANGUAGE CONTEXT ==\n"
+    "The customer is speaking English. "
+    "You MUST respond in English. Do NOT use Hindi or Hinglish words."
+)
+
 
 def ask_llm(messages, lang="en"):
 
-    if lang == "hi" and messages:
-        modified = list(messages)
-        last = modified[-1]
-        if last.get("role") == "user":
-            modified[-1] = {
-                "role": "user",
-                "content": last["content"] + " [Reply in Hinglish]"
-            }
-        messages = modified
+    system_content = SYSTEM_PROMPT
+    if lang == "hi":
+        system_content += HINDI_INSTRUCTION
+    else:
+        system_content += ENGLISH_INSTRUCTION
 
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": system_content
             }
         ] + messages,
         "stream": False,
         "options": {
-            "temperature": 0,
+            "temperature": 0.3,
             "num_predict": 150,
             "num_ctx": 4096
         }
@@ -51,7 +62,7 @@ def ask_llm(messages, lang="en"):
         return (
             "Sorry, I am having trouble "
             "answering right now."
-        )
+        ), False
 
     data = response.json()
 
