@@ -19,13 +19,6 @@ from helper import (
     load_voice_style
 )
 
-try:
-    from indic_transliteration import sanscript
-    _HAS_TRANSLITERATE = True
-except ImportError:
-    _HAS_TRANSLITERATE = False
-    print("WARN: indic-transliteration not installed. Hindi TTS will use English voice.")
-
 _tts = None
 _style = None
 
@@ -114,11 +107,7 @@ def speak(text, output_file, lang="en"):
         )
 
     if lang == "hi" and not _has_devanagari(text):
-        if _HAS_TRANSLITERATE:
-            text = sanscript.transliterate(text, sanscript.HK, sanscript.DEVANAGARI)
-            print(f"TRANSLITERATED: {text[:80]}")
-        else:
-            lang = "en"
+        lang = "en"
 
     if lang not in AVAILABLE_LANGS:
         lang = "en"

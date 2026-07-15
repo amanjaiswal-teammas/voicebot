@@ -92,7 +92,7 @@ def process_call(
 
         if silent_lang == "hi":
             speak(
-                "Sorry, main samajh nahi paayi. Kya aap dobara bol sakti hain?",
+                "माफ़ कीजिए, मैं समझ नहीं पाई। क्या आप दोबारा बोल सकती हैं?",
                 output,
                 "hi",
             )

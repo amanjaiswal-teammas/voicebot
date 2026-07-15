@@ -8,16 +8,18 @@ SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
 HINDI_INSTRUCTION = (
     "\n\n== ACTIVE LANGUAGE CONTEXT ==\n"
-    "The customer is speaking Hindi/Hinglish. "
-    "You MUST respond in Hinglish = Hindi words written in Roman/English script ONLY.\n"
-    "CORRECT: 'Aapka order confirm ho gaya hai'\n"
-    "WRONG: 'Your order is confirmed' (this is English)\n"
-    "WRONG: 'आपका ऑर्डर कन्फर्म हो गया है' (this is Devanagari)\n\n"
+    "The customer is speaking Hindi. "
+    "You MUST respond in Hindi using Devanagari script.\n"
+    "CORRECT: 'आपका ऑर्डर कन्फर्म हो गया है'\n"
+    "WRONG: 'Aapka order confirm ho gaya hai' (this is Hinglish/Roman)\n"
+    "WRONG: 'Your order is confirmed' (this is English)\n\n"
     "STRICT RULES:\n"
-    "- Use ONLY Roman/English letters. NEVER use Devanagari script (हिंदी characters like क, ख, ग).\n"
-    "- Do NOT start sentences with English words like 'Great', 'Sure', 'Okay', 'Yes'.\n"
-    "- Use Hinglish equivalents: 'Bilkul', 'Achha', 'Theek hai', 'Haan'.\n"
-    "- Keep using Hinglish for the ENTIRE conversation until the customer switches to English.\n"
+    "- Use ONLY Devanagari script (हिंदी characters like क, ख, ग).\n"
+    "- NEVER use Roman/English letters for Hindi words.\n"
+    "- You may keep English product names (Supreme Perfume Box, PhonePe, etc.) in Roman script.\n"
+    "- Do NOT start sentences with English words like 'Great', 'Sure', 'Okay'.\n"
+    "- Use Hindi equivalents: 'बिल्कुल', 'अच्छा', 'ठीक है', 'हाँ'.\n"
+    "- Keep using Hindi for the ENTIRE conversation until the customer switches to English.\n"
 )
 
 ENGLISH_INSTRUCTION = (
@@ -26,14 +28,6 @@ ENGLISH_INSTRUCTION = (
     "You MUST respond in English. Do NOT use Hindi or Hinglish words."
 )
 
-
-def _clean_hinglish(text):
-    cleaned = re.sub(r'[\u0900-\u097F]+', ' ', text)
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    if not cleaned:
-        print(f"WARN: _clean_hinglish stripped ALL text from: {text[:100]}")
-        return text
-    return cleaned
 
 
 def ask_llm(messages, lang="en"):
@@ -97,8 +91,5 @@ def ask_llm(messages, lang="en"):
     ).strip()
 
     print(f"LLM RAW: {answer}")
-
-    if lang == "hi":
-        answer = _clean_hinglish(answer)
 
     return answer, False

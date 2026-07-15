@@ -27,10 +27,10 @@ GREETING_TEXT = (
 )
 
 GREETING_TEXT_HI = (
-    "Good morning! BellaVita se bol rahe hain. "
-    "Aapne cart mein product add kiya hai "
-    "aur aapke liye exclusive discount hai. "
-    "Sunna chahenge?"
+    "नमस्ते! BellaVita से बोल रहे हैं। "
+    "आपने कार्ट में प्रोडक्ट ऐड किया है "
+    "और आपके लिए एक्सक्लूसिव डिस्काउंट है। "
+    "सुनना चाहेंगे?"
 )
 
 _cached_greeting_ulaw: Optional[bytes] = None
