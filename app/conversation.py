@@ -14,8 +14,6 @@ SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", 
 
 
 def _get_tts_lang(lang, text):
-    if lang == "hi" and not re.search(r"[\u0900-\u097F]", text):
-        return "en"
     if lang in SUPERTONIC_LANGS:
         return lang
     return "en"
@@ -96,7 +94,7 @@ def process_call(
             speak(
                 "Sorry, main samajh nahi paayi. Kya aap dobara bol sakti hain?",
                 output,
-                "en",
+                "hi",
             )
         else:
             speak(

@@ -110,11 +110,11 @@ def _preload_greeting():
     path_hi = f"{AUDIO_DIR}/_greeting_hi.wav"
     if not os.path.exists(path_hi):
         print("PRELOAD: Generating Hindi greeting TTS...")
-        speak(GREETING_TEXT_HI, path_hi, "en")
+        speak(GREETING_TEXT_HI, path_hi, "hi")
     _cached_greeting_ulaw_hi = _audio_to_ulaw(path_hi)
 
     print("PRELOAD: Preloading Hindi greeting segments...")
-    segs_hi = speak_segments(GREETING_TEXT_HI, "en", prefix="greeting_hi")
+    segs_hi = speak_segments(GREETING_TEXT_HI, "hi", prefix="greeting_hi")
     segments_json_hi = []
     for text, seg_path in segs_hi:
         ulaw_bytes = _audio_to_ulaw(seg_path)
