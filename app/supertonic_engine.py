@@ -20,7 +20,7 @@ from helper import (
 )
 
 try:
-    from indic_transliteration import sanscript, transliterate
+    from indic_transliteration import sanscript
     _HAS_TRANSLITERATE = True
 except ImportError:
     _HAS_TRANSLITERATE = False
@@ -115,7 +115,7 @@ def speak(text, output_file, lang="en"):
 
     if lang == "hi" and not _has_devanagari(text):
         if _HAS_TRANSLITERATE:
-            text = transliterate.transliterate(text, sanscript.HK, sanscript.DEVANAGARI)
+            text = sanscript.transliterate(text, sanscript.HK, sanscript.DEVANAGARI)
             print(f"TRANSLITERATED: {text[:80]}")
         else:
             lang = "en"
