@@ -98,12 +98,7 @@ def ask_llm(messages, lang="en"):
 
     print(f"LLM RAW: {answer}")
 
-    hangup = "[END]" in answer
-    if hangup:
-        print("LLM: [END] tag detected — hangup=True")
-    answer = answer.replace("[END]", "").strip()
-
     if lang == "hi":
         answer = _clean_hinglish(answer)
 
-    return answer, hangup
+    return answer, False

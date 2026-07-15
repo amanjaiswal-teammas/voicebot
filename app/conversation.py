@@ -161,8 +161,14 @@ def process_call(
     print(f"LLM_HANGUP={hangup}")
 
     if not hangup:
-        goodbye_words_en = ["have a great day", "have a nice day", "have a good day"]
-        goodbye_words_hi = ["aapka din ho", "acha din ho", "din ho achha"]
+        goodbye_words_en = [
+            "have a great day", "have a nice day", "have a good day",
+            "thank you for your time", "bye", "goodbye",
+        ]
+        goodbye_words_hi = [
+            "aapka din ho", "acha din ho", "din ho achha",
+            "aapka time ke liye thank", "thank you for your time",
+        ]
         all_goodbye = goodbye_words_en + goodbye_words_hi
         if any(w in answer.lower() for w in all_goodbye):
             hangup = True
