@@ -52,7 +52,7 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 100,
+            "num_predict": 130,
             "num_ctx": 2048,
             "repeat_penalty": 1.1,
             "top_p": 0.9,

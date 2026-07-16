@@ -225,9 +225,15 @@ async def voice_audio_segmented(
     lang = result.get("lang", "en")
 
     if not bot_text or not bot_text.strip():
-        print(f"API: empty bot_text → hangup=True")
+        if hangup:
+            print(f"API: empty bot_text → hangup=True")
+            return Response(
+                content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
+                media_type="application/json",
+            )
+        print(f"API: empty bot_text → silent skip")
         return Response(
-            content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
+            content=json.dumps({"call_id": call_id, "segments": [], "hangup": False}),
             media_type="application/json",
         )
 

@@ -73,6 +73,17 @@ def process_call(
 
     if not caller_text.strip():
 
+        if interrupted_text:
+            print("EMPTY BARGE-IN — skipping sorry, will re-listen")
+            return {
+                "call_id": call_id,
+                "caller": "",
+                "bot": "",
+                "audio": None,
+                "hangup": False,
+                "lang": lang,
+            }
+
         retries = sessions.get(call_id, {}).get("silent_retries", 0) + 1
         sessions[call_id]["silent_retries"] = retries
 
