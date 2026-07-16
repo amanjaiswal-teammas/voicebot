@@ -7,17 +7,22 @@ from .bellavita_prompt import SYSTEM_PROMPT as BP_SYSTEM_PROMPT
 SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
 HINDI_INSTRUCTION = (
-    "\n\n== HINDI MODE ==\n"
-    "Reply in Hindi using Devanagari script ONLY.\n"
-    "No Roman script for Hindi words. Keep product names in English.\n"
-    "1-2 sentences max. Phone call, not chat.\n"
-    "After customer says yes/tell me → pitch Supreme Perfume Box.\n"
-    "After customer says no → ask reason, then goodbye if repeated.\n"
+    "\n\n== HINDI RESPONSE MODE ==\n"
+    "The customer is speaking Hindi. Reply in Hindi using Devanagari script.\n\n"
+    "STRICT RULES:\n"
+    "- Use ONLY Devanagari script for Hindi words.\n"
+    "- Keep product names (Supreme Perfume Box, PhonePe) in English.\n"
+    "- Do NOT make up or invent any words. Use only real Hindi words.\n"
+    "- Keep responses SHORT: 1-2 sentences max. This is a phone call.\n"
+    "- Do NOT skip conversation steps. Follow the sales flow step by step.\n"
+    "- When customer says 'yes/tell me', first explain the product, THEN ask if they want to order.\n"
+    "- NEVER confirm an order without collecting details first.\n"
 )
 
 ENGLISH_INSTRUCTION = (
-    "\n\n== ENGLISH MODE ==\n"
-    "Reply in English. 1-2 sentences max. Phone call, not chat.\n"
+    "\n\n== ENGLISH RESPONSE MODE ==\n"
+    "The customer is speaking English. "
+    "Reply in English only. Keep responses SHORT: 1-2 sentences max."
 )
 
 HANGUP_INSTRUCTION = ""
@@ -43,11 +48,11 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 80,
-            "num_ctx": 1024,
+            "num_predict": 130,
+            "num_ctx": 2048,
             "repeat_penalty": 1.1,
             "top_p": 0.9,
-            "top_k": 20,
+            "top_k": 40,
         }
     }
 
