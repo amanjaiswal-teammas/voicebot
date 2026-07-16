@@ -8,7 +8,7 @@ HINGLISH_WORDS = {
     # Common verbs / auxiliaries
     "hai", "ho", "hain", "tha", "thi", "hoga", "hogi", "hoge",
     "karna", "karo", "kare", "karta", "karti", "batao", "bolo", "suno",
-    "chahiye", "lagega", "milega", "de", "do", "le", "lo", "ja", "aa",
+    "chahiye", "lagega", "milega",
     "gaya", "gai", "gaye", "raha", "rahi", "rahe", "dunga", "dungi",
     "karunga", "karungi", "bataunga", "bataungi", "samajh", "samjhe",
     "samjh", "bol", "bolna", "sunna", "dekhna", "dekh", "lenge",
@@ -110,7 +110,7 @@ SWITCH_TO_HI = re.compile(
 )
 
 LANGUAGE_QUESTION = re.compile(
-    r"(weren't you|were you|are you|do you|can you|shouldn't you|won't you|isn't it)",
+    r"(wer[e]?nt you|were not you|were you|are you|do you|can you|shouldn.t you|won.t you|isn.t it)",
     re.IGNORECASE,
 )
 
