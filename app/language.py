@@ -6,7 +6,7 @@ HINGLISH_WORDS = {
     "tumhara", "tumhari", "aap", "aapko", "aapka", "aapki", "ye",
     "wo", "yeh", "woh", "kya", "kaun", "maine", "tune", "usne",
     # Common verbs / auxiliaries
-    "hai", "ho", "hain", "tha", "thi", "the", "hoga", "hogi", "hoge",
+    "hai", "ho", "hain", "tha", "thi", "hoga", "hogi", "hoge",
     "karna", "karo", "kare", "karta", "karti", "batao", "bolo", "suno",
     "chahiye", "lagega", "milega", "de", "do", "le", "lo", "ja", "aa",
     "gaya", "gai", "gaye", "raha", "rahi", "rahe", "dunga", "dungi",

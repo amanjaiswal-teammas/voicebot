@@ -185,9 +185,9 @@ def process_call(
             "शुक्रिया", "अलविदा",
         ]
         all_goodbye = goodbye_words_en + goodbye_words_hi
-        if any(w in answer.lower() for w in all_goodbye):
+        if any(w in caller_text.lower() for w in all_goodbye):
             hangup = True
-            print("HANGUP AUTO-DETECTED (goodbye phrase)")
+            print("HANGUP AUTO-DETECTED (customer said goodbye phrase)")
 
     print("STEP 3: TTS")
 
