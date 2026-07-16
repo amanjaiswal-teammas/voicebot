@@ -49,11 +49,11 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 130,
-            "num_ctx": 2048,
+            "num_predict": 80,
+            "num_ctx": 1024,
             "repeat_penalty": 1.1,
             "top_p": 0.9,
-            "top_k": 40,
+            "top_k": 20,
         }
     }
 
