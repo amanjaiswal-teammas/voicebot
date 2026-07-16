@@ -1,7 +1,7 @@
 from .stt import transcribe
 from .llm import ask_llm
 from .supertonic_engine import speak
-from .language import detect_language
+from .language import detect_language, detect_language_switch
 from .memory import (
     get_history,
     add_message
@@ -48,14 +48,19 @@ def process_call(
 
         whisper_lang = stt_result["language"]
 
-        text_lang = detect_language(caller_text)
-
-        if text_lang == "hi":
-            lang = "hi"
-        elif whisper_lang in SUPERTONIC_LANGS:
-            lang = whisper_lang
+        switch_lang = detect_language_switch(caller_text)
+        if switch_lang:
+            lang = switch_lang
+            print(f"LANGUAGE SWITCH DETECTED → {lang}")
         else:
-            lang = "hi" if prev_lang == "hi" else "en"
+            text_lang = detect_language(caller_text)
+
+            if text_lang == "hi":
+                lang = "hi"
+            elif whisper_lang in SUPERTONIC_LANGS:
+                lang = whisper_lang
+            else:
+                lang = "hi" if prev_lang == "hi" else "en"
 
         print(
             "WHISPER LANG:", whisper_lang,

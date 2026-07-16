@@ -97,3 +97,23 @@ def detect_language(text):
         return "hi"
 
     return "en"
+
+
+SWITCH_TO_EN = re.compile(
+    r"(english|अंग्रेज़ी|अंग्रेजी|angrezi|inglish)",
+    re.IGNORECASE,
+)
+
+SWITCH_TO_HI = re.compile(
+    r"(hindi|हिंदी|hindī)",
+    re.IGNORECASE,
+)
+
+
+def detect_language_switch(text):
+    text_lower = text.lower()
+    if SWITCH_TO_EN.search(text_lower):
+        return "en"
+    if SWITCH_TO_HI.search(text_lower):
+        return "hi"
+    return None
