@@ -1,6 +1,6 @@
 from .stt import transcribe
-from .llm import ask_llm
-from .supertonic_engine import speak
+from .llm import ask_llm_stream
+from .supertonic_engine import speak, split_into_segments
 from .language import detect_language, detect_language_switch
 from .memory import (
     get_history,
@@ -9,6 +9,7 @@ from .memory import (
 from .session_store import sessions
 import time
 import re
+import os
 
 SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na"}
 
@@ -86,6 +87,7 @@ def process_call(
                 "caller": "",
                 "bot": "",
                 "audio": None,
+                "segments": [],
                 "hangup": False,
                 "lang": lang,
             }
@@ -100,6 +102,7 @@ def process_call(
                 "caller": "",
                 "bot": "",
                 "audio": None,
+                "segments": [],
                 "hangup": True,
                 "lang": lang,
             }
@@ -125,6 +128,7 @@ def process_call(
             "caller": "",
             "bot": "Sorry, I didn't catch that.",
             "audio": output,
+            "segments": [],
             "lang": silent_lang,
         }
 
@@ -148,7 +152,7 @@ def process_call(
         caller_text
     )
 
-    print("STEP 2: LLM")
+    print("STEP 2: LLM (STREAMING)")
 
     history = get_history(call_id)
 
@@ -156,21 +160,53 @@ def process_call(
 
     llm_start = time.time()
 
-    answer, hangup = ask_llm(history, lang)
+    full_answer = ""
+    hangup = False
+    tts_lang = _get_tts_lang(lang, "")
 
-    print(
-        "LLM:",
-        int((time.time() - llm_start) * 1000),
-        "ms"
-    )
+    segments = []
+    pending_text = ""
+
+    for sentence, is_done, seg_hangup in ask_llm_stream(history, lang):
+        elapsed = int((time.time() - llm_start) * 1000)
+
+        if is_done:
+            full_answer = sentence
+            hangup = seg_hangup
+            print(f"LLM DONE: {elapsed}ms answer_len={len(full_answer)}")
+        else:
+            pending_text += (" " if pending_text else "") + sentence
+            print(f"LLM SENTENCE ({elapsed}ms): {sentence[:60]}...")
+
+            tts_lang = _get_tts_lang(lang, sentence)
+            seg_idx = len(segments)
+            seg_path = f"audio/{call_id}_stream_{seg_idx}.wav"
+            try:
+                speak(sentence, seg_path, tts_lang)
+                segments.append((sentence, seg_path))
+                print(f"TTS PRE-GEN: {seg_path}")
+            except Exception as e:
+                print(f"TTS STREAM ERROR: {e}")
+
+    if not full_answer:
+        full_answer = pending_text
+
+    if pending_text and not segments:
+        tts_lang = _get_tts_lang(lang, pending_text)
+        seg_path = f"audio/{call_id}_stream_0.wav"
+        try:
+            speak(pending_text, seg_path, tts_lang)
+            segments.append((pending_text, seg_path))
+        except Exception as e:
+            print(f"TTS FINAL ERROR: {e}")
 
     add_message(
         call_id,
         "assistant",
-        answer
+        full_answer
     )
 
-    print("BOT:", answer)
+    print("BOT:", full_answer)
     print(f"LLM_HANGUP={hangup}")
 
     if not hangup:
@@ -193,33 +229,35 @@ def process_call(
 
     output_file = f"audio/{call_id}.wav"
 
-    tts_start = time.time()
+    if segments:
+        final_segments = segments
+    else:
+        tts_lang = _get_tts_lang(lang, full_answer)
+        tts_start = time.time()
+        try:
+            speak(
+                full_answer,
+                output_file,
+                tts_lang
+            )
+        except Exception as e:
+            print("TTS ERROR:", e)
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": hangup,
+                "lang": lang,
+            }
 
-    tts_lang = _get_tts_lang(lang, answer)
-
-    try:
-        speak(
-            answer,
-            output_file,
-            tts_lang
+        print(
+            "TTS:",
+            int((time.time() - tts_start) * 1000),
+            "ms"
         )
-    except Exception as e:
-
-        print("TTS ERROR:", e)
-
-        return {
-            "call_id": call_id,
-            "caller": caller_text,
-            "bot": answer,
-            "audio": None,
-            "lang": lang,
-        }
-
-    print(
-        "TTS:",
-        int((time.time() - tts_start) * 1000),
-        "ms"
-    )
+        final_segments = [(full_answer, output_file)]
 
     print(
         "TOTAL:",
@@ -230,10 +268,11 @@ def process_call(
     result = {
         "call_id": call_id,
         "caller": caller_text,
-        "bot": answer,
+        "bot": full_answer,
         "audio": output_file,
+        "segments": final_segments,
         "hangup": hangup,
         "lang": lang,
     }
-    print(f"PROCESS_CALL RETURN: hangup={hangup} lang={lang} bot_len={len(answer)}")
+    print(f"PROCESS_CALL RETURN: hangup={hangup} lang={lang} bot_len={len(full_answer)} segments={len(final_segments)}")
     return result

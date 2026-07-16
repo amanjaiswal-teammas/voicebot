@@ -223,6 +223,7 @@ async def voice_audio_segmented(
     bot_text = result.get("bot", "")
     hangup = result.get("hangup", False)
     lang = result.get("lang", "en")
+    pre_segments = result.get("segments", [])
 
     if not bot_text or not bot_text.strip():
         if hangup:
@@ -234,6 +235,23 @@ async def voice_audio_segmented(
         print(f"API: empty bot_text → silent skip")
         return Response(
             content=json.dumps({"call_id": call_id, "segments": [], "hangup": False}),
+            media_type="application/json",
+        )
+
+    if pre_segments:
+        segments_json = []
+        for text, path in pre_segments:
+            if os.path.exists(path):
+                ulaw_bytes = _audio_to_ulaw(path)
+                os.remove(path)
+                segments_json.append({
+                    "text": text,
+                    "audio": base64.b64encode(ulaw_bytes).decode(),
+                })
+        resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
+        print(f"API RESPONSE (pre-gen): hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
+        return Response(
+            content=json.dumps(resp),
             media_type="application/json",
         )
 

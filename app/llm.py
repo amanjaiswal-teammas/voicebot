@@ -2,9 +2,11 @@ import requests
 import re
 
 from .config import OLLAMA_HOST, MODEL_NAME
-from .bellavita_prompt import SYSTEM_PROMPT as BP_SYSTEM_PROMPT
-
-SYSTEM_PROMPT = BP_SYSTEM_PROMPT
+from .bellavita_prompt import (
+    SYSTEM_PROMPT_BASE,
+    SYSTEM_PROMPT_HI,
+    SYSTEM_PROMPT_EN,
+)
 
 HINDI_INSTRUCTION = (
     "\n\n== HINDI RESPONSE MODE ==\n"
@@ -26,17 +28,21 @@ ENGLISH_INSTRUCTION = (
     "Reply in English only. Keep responses SHORT: 1-2 sentences max."
 )
 
-HANGUP_INSTRUCTION = ""
 
+def _build_system_prompt(lang):
+    system_content = SYSTEM_PROMPT_BASE
+    if lang == "hi":
+        system_content += SYSTEM_PROMPT_HI
+        system_content += HINDI_INSTRUCTION
+    else:
+        system_content += SYSTEM_PROMPT_EN
+        system_content += ENGLISH_INSTRUCTION
+    return system_content
 
 
 def ask_llm(messages, lang="en"):
 
-    system_content = SYSTEM_PROMPT + HANGUP_INSTRUCTION
-    if lang == "hi":
-        system_content += HINDI_INSTRUCTION
-    else:
-        system_content += ENGLISH_INSTRUCTION
+    system_content = _build_system_prompt(lang)
 
     payload = {
         "model": MODEL_NAME,
@@ -101,3 +107,111 @@ def ask_llm(messages, lang="en"):
         answer = answer.replace("[HANGUP]", "").strip()
 
     return answer, hangup
+
+
+def ask_llm_stream(messages, lang="en"):
+    system_content = _build_system_prompt(lang)
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_content
+            }
+        ] + messages,
+        "stream": True,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 130,
+            "num_ctx": 2048,
+            "repeat_penalty": 1.1,
+            "top_p": 0.9,
+            "top_k": 40,
+        }
+    }
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/chat",
+            json=payload,
+            timeout=30,
+            stream=True,
+        )
+        response.raise_for_status()
+
+    except Exception as e:
+        print("LLM STREAM ERROR:", e)
+        yield ("Sorry, I am having trouble answering right now.", True, False)
+        return
+
+    full_answer = ""
+    hangup = False
+    think_buf = ""
+    in_think = False
+
+    for line in response.iter_lines():
+        if not line:
+            continue
+
+        try:
+            chunk = requests.models.Response()
+            import json
+            data = json.loads(line)
+        except Exception:
+            continue
+
+        if data.get("done"):
+            break
+
+        msg = data.get("message", {})
+        token = msg.get("content", "")
+
+        if not token:
+            continue
+
+        full_answer += token
+
+        if "<think>" in token:
+            in_think = True
+            think_buf += token
+            continue
+
+        if in_think:
+            think_buf += token
+            if "</think>" in token:
+                in_think = False
+                think_end = think_buf.find("</think>")
+                after_think = think_buf[think_end + 8:]
+                if after_think.strip():
+                    full_answer = after_think.strip()
+                else:
+                    full_answer = full_answer.replace(think_buf, "").strip()
+                think_buf = ""
+            continue
+
+        sentences = re.split(r'(?<=[.!?।])\s+', full_answer.strip())
+        if len(sentences) >= 2:
+            ready = " ".join(sentences[:-1]).strip()
+            if ready:
+                full_answer = sentences[-1]
+                h = "[HANGUP]" in ready
+                ready = ready.replace("[HANGUP]", "").strip()
+                if ready:
+                    yield (ready, False, h)
+
+    full_answer = re.sub(
+        r"<think>.*?</think>",
+        "",
+        full_answer,
+        flags=re.S
+    ).strip()
+
+    if "[HANGUP]" in full_answer:
+        hangup = True
+        full_answer = full_answer.replace("[HANGUP]", "").strip()
+
+    print(f"LLM RAW: {full_answer}")
+
+    if full_answer:
+        yield (full_answer, True, hangup)
