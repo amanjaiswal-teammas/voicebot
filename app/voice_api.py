@@ -207,7 +207,8 @@ async def voice_audio_segmented(
     else:
         active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > 0.02))
         active_ms = active / max(diag_sr, 1) * 1000
-        treat_silent = rms < 0.01 or active_ms < 200
+        min_active = 80 if interrupted_text else 200
+        treat_silent = rms < 0.01 or active_ms < min_active
         print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms treat_silent={treat_silent}")
         if treat_silent:
             result = process_call(call_id, None, interrupted_text=interrupted_text)
