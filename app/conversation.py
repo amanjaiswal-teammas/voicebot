@@ -39,7 +39,7 @@ def process_call(
 
     if audio_file is None:
         caller_text = ""
-        lang = prev_lang or "en"
+        lang = prev_lang or "hi"
     else:
         stt_start = time.time()
 
