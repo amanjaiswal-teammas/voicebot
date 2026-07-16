@@ -139,7 +139,8 @@ def process_call(
 
     text_lower = caller_text.lower().strip()
     is_rejection = bool(re.search(
-        r"\b(nahi|nahi|nahin|nahi chahiye|mana hai|nahi lena|no|not interested|skip|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi)\b",
+        r"\b(nahi|nahi|nahin|nahi chahiye|mana hai|nahi lena|no|not interested|skip|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
+        r"नहीं|नहीं चाहिए|मना है|नहीं लेना|नहीं चाहते|नहीं मंगता|नहीं करना|बिल्कुल नहीं|एकदम नहीं)\b",
         text_lower
     ))
     if is_rejection:
@@ -240,6 +241,9 @@ def process_call(
         if any(w in caller_text.lower() for w in all_goodbye):
             hangup = True
             print("HANGUP AUTO-DETECTED (customer said goodbye phrase)")
+        elif any(w in full_answer.lower() for w in all_goodbye):
+            hangup = True
+            print("HANGUP AUTO-DETECTED (bot said goodbye phrase)")
 
     print("STEP 3: TTS")
 
