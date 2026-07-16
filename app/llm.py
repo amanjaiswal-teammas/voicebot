@@ -51,12 +51,12 @@ def ask_llm(messages, lang="en"):
         ] + messages,
         "stream": False,
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.3,
             "num_predict": 100,
-            "num_ctx": 1536,
-            "repeat_penalty": 1.2,
-            "top_p": 0.8,
-            "top_k": 30,
+            "num_ctx": 2048,
+            "repeat_penalty": 1.1,
+            "top_p": 0.9,
+            "top_k": 40,
         }
     }
 
