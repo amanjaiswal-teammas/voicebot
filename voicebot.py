@@ -25,7 +25,7 @@ def agi_cmd(cmd):
     return sys.stdin.readline().strip()
 
 
-def get_segments(call_id, audio_path=None, interrupted_text=None):
+def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None):
     if audio_path:
         with open(audio_path, "rb") as f:
             r = requests.post(
@@ -38,12 +38,15 @@ def get_segments(call_id, audio_path=None, interrupted_text=None):
                 timeout=120,
             )
     else:
+        post_data = {
+            "call_id": call_id,
+            "outbound": "true",
+        }
+        if lang:
+            post_data["lang"] = lang
         r = requests.post(
             f"{API_BASE}/voice-audio-segmented",
-            data={
-                "call_id": call_id,
-                "outbound": "true",
-            },
+            data=post_data,
             timeout=120,
         )
     if r.status_code != 200:
@@ -215,8 +218,11 @@ try:
     call_id = str(uuid.uuid4())
     log(f"CALL_ID={call_id}")
 
+    greeting_lang = "hi"
+    log(f"GREETING LANG: {greeting_lang}")
+
     log("REQUESTING SEGMENTED GREETING")
-    greeting_data = get_segments(call_id)
+    greeting_data = get_segments(call_id, lang=greeting_lang)
     if greeting_data is None:
         log("FAILED TO GET GREETING")
         raise SystemExit(1)

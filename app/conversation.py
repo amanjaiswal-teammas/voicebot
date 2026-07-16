@@ -48,19 +48,19 @@ def process_call(
 
         whisper_lang = stt_result["language"]
 
-        if whisper_lang in SUPERTONIC_LANGS:
+        text_lang = detect_language(caller_text)
+
+        if text_lang == "hi":
+            lang = "hi"
+        elif whisper_lang in SUPERTONIC_LANGS:
             lang = whisper_lang
         else:
-            lang = detect_language(caller_text)
-
-        if lang == "en" and prev_lang == "hi" and caller_text.strip():
-            text_lang = detect_language(caller_text)
-            if text_lang == "hi":
-                lang = "hi"
+            lang = "hi" if prev_lang == "hi" else "en"
 
         print(
             "WHISPER LANG:", whisper_lang,
-            "| DETECTED LANG:", lang,
+            "| TEXT LANG:", text_lang,
+            "| FINAL LANG:", lang,
             "| PREV LANG:", prev_lang
         )
 

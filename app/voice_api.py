@@ -166,15 +166,19 @@ async def voice_audio_segmented(
     call_id: str = Form(None),
     outbound: bool = Form(False),
     interrupted_text: Optional[str] = Form(None),
+    lang: Optional[str] = Form(None),
 ):
     if not call_id:
         call_id = create_session()
 
-    print(f"SEG-API: call_id={call_id} outbound={outbound} interrupted_text='{interrupted_text}'")
+    print(f"SEG-API: call_id={call_id} outbound={outbound} interrupted_text='{interrupted_text}' lang='{lang}'")
 
     if outbound:
-        add_message(call_id, "assistant", GREETING_TEXT)
-        data = json.loads(_cached_greeting_segments)
+        greeting_lang = lang if lang in ("hi", "en") else "en"
+        greeting_text = GREETING_TEXT_HI if greeting_lang == "hi" else GREETING_TEXT
+        add_message(call_id, "assistant", greeting_text)
+        cached = _cached_greeting_segments_hi if greeting_lang == "hi" else _cached_greeting_segments
+        data = json.loads(cached)
         data["call_id"] = call_id
         return Response(
             content=json.dumps(data),
