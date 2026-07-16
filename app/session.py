@@ -9,7 +9,8 @@ def create_session():
 
     sessions[call_id] = {
         "active": True,
-        "messages": []
+        "messages": [],
+        "no_count": 0,
     }
 
     return call_id

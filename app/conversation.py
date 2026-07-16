@@ -137,6 +137,22 @@ def process_call(
     sessions[call_id]["silent_retries"] = 0
     sessions[call_id]["last_lang"] = lang
 
+    text_lower = caller_text.lower().strip()
+    is_rejection = bool(re.search(
+        r"\b(nahi|nahi|nahin|nahi chahiye|mana hai|nahi lena|no|not interested|skip|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi)\b",
+        text_lower
+    ))
+    if is_rejection:
+        sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
+        no_count = sessions[call_id]["no_count"]
+        print(f"REJECTION #{no_count}: {caller_text}")
+        if no_count >= 2:
+            add_message(call_id, "system",
+                "[Customer has refused twice now. You MUST say goodbye immediately. "
+                "Do NOT ask for reasons or pitch again. Just say goodbye warmly in their language.]")
+    else:
+        sessions[call_id]["no_count"] = 0
+
     if interrupted_text:
         context = (
             f"[Customer interrupted. "
