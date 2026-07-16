@@ -109,11 +109,20 @@ SWITCH_TO_HI = re.compile(
     re.IGNORECASE,
 )
 
+LANGUAGE_QUESTION = re.compile(
+    r"(weren't you|were you|are you|do you|can you|shouldn't you|won't you|isn't it)",
+    re.IGNORECASE,
+)
+
 
 def detect_language_switch(text):
     text_lower = text.lower()
     if SWITCH_TO_EN.search(text_lower):
+        if LANGUAGE_QUESTION.search(text_lower):
+            return None
         return "en"
     if SWITCH_TO_HI.search(text_lower):
+        if LANGUAGE_QUESTION.search(text_lower):
+            return None
         return "hi"
     return None

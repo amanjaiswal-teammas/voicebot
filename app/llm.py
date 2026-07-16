@@ -149,13 +149,13 @@ def ask_llm_stream(messages, lang="en"):
     hangup = False
     think_buf = ""
     in_think = False
+    yielded_up_to = 0
 
     for line in response.iter_lines():
         if not line:
             continue
 
         try:
-            chunk = requests.models.Response()
             import json
             data = json.loads(line)
         except Exception:
@@ -190,15 +190,17 @@ def ask_llm_stream(messages, lang="en"):
                 think_buf = ""
             continue
 
-        sentences = re.split(r'(?<=[.!?।])\s+', full_answer.strip())
+        clean = re.sub(r"<think>.*?</think>", "", full_answer, flags=re.S).strip()
+        sentences = re.split(r'(?<=[.!?।])\s+', clean)
         if len(sentences) >= 2:
             ready = " ".join(sentences[:-1]).strip()
-            if ready:
-                full_answer = sentences[-1]
-                h = "[HANGUP]" in ready
-                ready = ready.replace("[HANGUP]", "").strip()
-                if ready:
-                    yield (ready, False, h)
+            if ready and len(ready) > yielded_up_to:
+                new_text = ready[yielded_up_to:]
+                yielded_up_to = len(ready)
+                h = "[HANGUP]" in new_text
+                new_text = new_text.replace("[HANGUP]", "").strip()
+                if new_text:
+                    yield (new_text, False, h)
 
     full_answer = re.sub(
         r"<think>.*?</think>",
@@ -211,7 +213,10 @@ def ask_llm_stream(messages, lang="en"):
         hangup = True
         full_answer = full_answer.replace("[HANGUP]", "").strip()
 
+    remaining = full_answer[yielded_up_to:].strip()
     print(f"LLM RAW: {full_answer}")
 
-    if full_answer:
+    if remaining:
+        yield (remaining, True, hangup)
+    elif full_answer:
         yield (full_answer, True, hangup)
