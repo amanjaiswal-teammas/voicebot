@@ -25,8 +25,8 @@ def transcribe(audio_file, language_hint=None):
         audio_file,
         language=whisper_lang,
         initial_prompt=initial_prompt,
-        beam_size=5,
-        best_of=3,
+        beam_size=3,
+        best_of=1,
         vad_filter=True
     )
 
