@@ -15,7 +15,8 @@ HINDI_INSTRUCTION = (
     "- Do NOT make up or invent any words. Use only real Hindi words.\n"
     "- Keep responses SHORT: 1-2 sentences max. This is a phone call.\n"
     "- Do NOT skip conversation steps. Follow the sales flow step by step.\n"
-    "- When customer says 'yes/tell me', first explain the product, THEN ask if they want to order.\n"
+    "- When customer says 'yes/tell me/haan/bilkul/batao', PITCH THE PRODUCT first.\n"
+    "- When customer says 'nahi/no', ask for reason first, then goodbye if repeated.\n"
     "- NEVER confirm an order without collecting details first.\n"
 )
 

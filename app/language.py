@@ -100,7 +100,7 @@ def detect_language(text):
 
 
 SWITCH_TO_EN = re.compile(
-    r"(english|अंग्रेज़ी|अंग्रेजी|angrezi|inglish)",
+    r"(english|अंग्रेज़ी|अंग्रेजी|angrezi|inglish|इंग्लिश|ingilish|angliz|anglizm)",
     re.IGNORECASE,
 )
 

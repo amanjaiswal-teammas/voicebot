@@ -51,6 +51,7 @@ def process_call(
         switch_lang = detect_language_switch(caller_text)
         if switch_lang:
             lang = switch_lang
+            text_lang = lang
             print(f"LANGUAGE SWITCH DETECTED → {lang}")
         else:
             text_lang = detect_language(caller_text)
