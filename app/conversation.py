@@ -166,6 +166,8 @@ def process_call(
         goodbye_words_hi = [
             "aapka din ho", "acha din ho", "din ho achha",
             "aapka time ke liye thank", "thank you for your time",
+            "अच्छा दिन हो", "दिन अच्छा हो", "आपका दिन हो",
+            "शुक्रिया", "अलविदा",
         ]
         all_goodbye = goodbye_words_en + goodbye_words_hi
         if any(w in answer.lower() for w in all_goodbye):

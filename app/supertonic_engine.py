@@ -91,10 +91,22 @@ def _has_devanagari(text):
     return bool(re.search(r'[\u0900-\u097F]', text))
 
 
-def _normalize_for_tts(text):
+def _normalize_for_tts(text, lang="en"):
     text = re.sub(r'\bRs\b', 'Rupees', text, flags=re.IGNORECASE)
     text = re.sub(r'(?<=\d),(?=\d)', '', text)
     text = text.replace('%', ' percent ')
+
+    if lang == "hi":
+        digit_map = {
+            '0': 'शून्य', '1': 'एक', '2': 'दो', '3': 'तीन',
+            '4': 'चार', '5': 'पाँच', '6': 'छह', '7': 'सात',
+            '8': 'आठ', '9': 'नौ',
+        }
+        def replace_digits(m):
+            num = m.group(0)
+            return ' '.join(digit_map.get(d, d) for d in num)
+        text = re.sub(r'\b\d+\b', replace_digits, text)
+
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -112,7 +124,7 @@ def speak(text, output_file, lang="en"):
     if lang not in AVAILABLE_LANGS:
         lang = "en"
 
-    text = _normalize_for_tts(text)
+    text = _normalize_for_tts(text, lang)
 
     tts, style = get_tts()
 
