@@ -217,6 +217,6 @@ def ask_llm_stream(messages, lang="en"):
     print(f"LLM RAW: {full_answer}")
 
     if remaining:
-        yield (remaining, True, hangup)
+        yield (full_answer, True, hangup)
     elif full_answer:
         yield (full_answer, True, hangup)
