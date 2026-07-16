@@ -7,23 +7,16 @@ from .bellavita_prompt import SYSTEM_PROMPT as BP_SYSTEM_PROMPT
 SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 
 HINDI_INSTRUCTION = (
-    "\n\n== HINDI RESPONSE MODE ==\n"
-    "The customer is speaking Hindi. Reply in Hindi using Devanagari script.\n\n"
-    "STRICT RULES:\n"
-    "- Use ONLY Devanagari script for Hindi words.\n"
-    "- Keep product names (Supreme Perfume Box, PhonePe) in English.\n"
-    "- Do NOT make up or invent any words. Use only real Hindi words.\n"
-    "- Keep responses SHORT: 1-2 sentences max. This is a phone call.\n"
-    "- Do NOT skip conversation steps. Follow the sales flow step by step.\n"
-    "- When customer says 'yes/tell me/haan/bilkul/batao', PITCH THE PRODUCT first.\n"
-    "- When customer says 'nahi/no', ask for reason first, then goodbye if repeated.\n"
-    "- NEVER confirm an order without collecting details first.\n"
+    "\n\n== HINDI MODE ==\n"
+    "Reply in Hindi (Devanagari). Keep product names in English.\n"
+    "1-2 sentences max. Phone call, not chat.\n"
+    "After customer says yes/tell me → pitch product.\n"
+    "After customer says no → ask reason, then goodbye if repeated.\n"
 )
 
 ENGLISH_INSTRUCTION = (
-    "\n\n== ENGLISH RESPONSE MODE ==\n"
-    "The customer is speaking English. "
-    "Reply in English only. Keep responses SHORT: 1-2 sentences max."
+    "\n\n== ENGLISH MODE ==\n"
+    "Reply in English. 1-2 sentences max. Phone call, not chat.\n"
 )
 
 HANGUP_INSTRUCTION = ""

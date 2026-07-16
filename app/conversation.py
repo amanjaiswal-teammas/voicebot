@@ -135,11 +135,9 @@ def process_call(
 
     if interrupted_text:
         context = (
-            f"[The customer interrupted you. "
-            f"You were saying: \"{interrupted_text}\". "
-            f"The customer then said: \"{caller_text}\". "
-            f"Respond naturally, acknowledging their interruption "
-            f"if appropriate.]"
+            f"[Customer interrupted. "
+            f"Customer said: \"{caller_text}\". "
+            f"Respond to what the customer said.]"
         )
         print("INTERRUPTED CONTEXT:", context)
         add_message(call_id, "system", context)
