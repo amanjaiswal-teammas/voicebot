@@ -9,14 +9,14 @@ SYSTEM_PROMPT = BP_SYSTEM_PROMPT
 HINDI_INSTRUCTION = (
     "\n\n== HINDI RESPONSE MODE ==\n"
     "The customer is speaking Hindi. Reply in Hindi using Devanagari script.\n\n"
-    "CORRECT: 'आपका ऑर्डर कन्फर्म हो गया है'\n"
-    "WRONG: 'Aapka order confirm ho gaya hai' (Roman)\n"
-    "WRONG: 'Your order is confirmed' (English)\n\n"
     "STRICT RULES:\n"
     "- Use ONLY Devanagari script for Hindi words.\n"
     "- Keep product names (Supreme Perfume Box, PhonePe) in English.\n"
     "- Do NOT make up or invent any words. Use only real Hindi words.\n"
     "- Keep responses SHORT: 1-2 sentences max. This is a phone call.\n"
+    "- Do NOT skip conversation steps. Follow the sales flow step by step.\n"
+    "- When customer says 'yes/tell me', first explain the product, THEN ask if they want to order.\n"
+    "- NEVER confirm an order without collecting details first.\n"
 )
 
 ENGLISH_INSTRUCTION = (
@@ -25,11 +25,7 @@ ENGLISH_INSTRUCTION = (
     "Reply in English only. Keep responses SHORT: 1-2 sentences max."
 )
 
-HANGUP_INSTRUCTION = (
-    "\n\nIf the customer says goodbye or the conversation is clearly over, "
-    "append [HANGUP] at the very end of your response. "
-    "Only when the conversation is truly finished."
-)
+HANGUP_INSTRUCTION = ""
 
 
 
