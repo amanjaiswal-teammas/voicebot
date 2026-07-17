@@ -59,10 +59,12 @@ def process_call(
 
             if text_lang == "hi":
                 lang = "hi"
-            elif whisper_lang in SUPERTONIC_LANGS:
+            elif text_lang == "en":
+                lang = "en"
+            elif whisper_lang in ("hi", "en"):
                 lang = whisper_lang
             else:
-                lang = "hi" if prev_lang == "hi" else "en"
+                lang = prev_lang or "hi"
 
         print(
             "WHISPER LANG:", whisper_lang,
@@ -138,38 +140,53 @@ def process_call(
     sessions[call_id]["last_lang"] = lang
 
     text_lower = caller_text.lower().strip()
-    is_rejection = bool(re.search(
-        r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-        r"नहीं|नहीं\s*चाहिए|मना\s*है|नहीं\s*लेना|नहीं\s*चाहते|नहीं\s*मंगता|नहीं\s*करना|बिल्कुल\s*नहीं|एकदम\s*नहीं|"
-        r"नहीं\s*जी|नहीं\s*समझ|नहीं\s*आओर|नहीं\s*चाहें|नहीं\s*सुनना)",
-        text_lower
-    )) or bool(re.search(
-        r"\b(no|skip|not interested)\b",
-        text_lower
-    ))
+
+    is_lang_switch = detect_language_switch(caller_text) is not None
+
+    is_rejection = False
+    if not is_lang_switch:
+        is_rejection = bool(re.search(
+            r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
+            r"नहीं\s*चाहिए|मना\s*है|नहीं\s*लेना|नहीं\s*चाहते|नहीं\s*मंगता|नहीं\s*करना|बिल्कुल\s*नहीं|एकदम\s*नहीं|"
+            r"नहीं\s*समझ|नहीं\s*सुनना|नहीं\s*करूँ|नहीं\s*करूंगा|नहीं\s*करूंगी)",
+            text_lower
+        )) or bool(re.search(
+            r"\b(no|skip|not interested)\b",
+            text_lower
+        ))
+
     if is_rejection:
         sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
         no_count = sessions[call_id]["no_count"]
         print(f"REJECTION #{no_count}: {caller_text}")
         if no_count >= 2:
             add_message(call_id, "system",
-                "[Customer has refused twice now. You MUST say goodbye immediately. "
-                "Do NOT ask for reasons or pitch again. Just say goodbye warmly in their language.]")
+                "[Customer has refused twice. STOP everything. You MUST respond with ONLY a goodbye message like 'शुक्रिया, अच्छा दिन हो!' or 'Thank you, have a great day!'. "
+                "Do NOT ask for reasons. Do NOT pitch. Do NOT continue the conversation. ONLY say goodbye.]")
+            sessions[call_id]["force_goodbye"] = True
         else:
-            add_message(call_id, "system",
-                "[Customer refused. You MUST ask for the reason first. "
-                "Do NOT say goodbye yet. Ask: 'क्या वजह है?' or 'May I know the reason?']")
+            if lang == "hi":
+                add_message(call_id, "system",
+                    "[Customer refused. You MUST ask for the reason in Hindi only. "
+                    "Say: 'ठीक है, क्या वजह है?' — nothing else.]")
+            else:
+                add_message(call_id, "system",
+                    "[Customer refused. You MUST ask for the reason in English only. "
+                    "Say: 'No problem. May I know why?' — nothing else.]")
     else:
         sessions[call_id]["no_count"] = 0
 
     if interrupted_text:
-        context = (
-            f"[Customer interrupted. "
-            f"Customer said: \"{caller_text}\". "
-            f"Respond to what the customer said.]"
-        )
-        print("INTERRUPTED CONTEXT:", context)
-        add_message(call_id, "system", context)
+        if sessions[call_id].get("force_goodbye"):
+            pass
+        else:
+            context = (
+                f"[Customer interrupted. "
+                f"Customer said: \"{caller_text}\". "
+                f"Respond to what the customer said.]"
+            )
+            print("INTERRUPTED CONTEXT:", context)
+            add_message(call_id, "system", context)
 
     add_message(
         call_id,
@@ -233,6 +250,11 @@ def process_call(
 
     print("BOT:", full_answer)
     print(f"LLM_HANGUP={hangup}")
+
+    if sessions[call_id].get("force_goodbye"):
+        hangup = True
+        sessions[call_id]["force_goodbye"] = False
+        print("HANGUP FORCED (rejection #2)")
 
     if not hangup:
         goodbye_words_en = [
