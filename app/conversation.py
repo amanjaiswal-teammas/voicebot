@@ -150,7 +150,9 @@ def process_call(
             r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
             r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+समझ|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
             r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
-            r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी)",
+            r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
+            r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
+            r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त)",
             text_lower
         )) or bool(re.search(
             r"\b(no|skip|not interested|don'?t\s*want)\b",
@@ -195,6 +197,43 @@ def process_call(
         "user",
         caller_text
     )
+
+    if sessions[call_id].get("force_goodbye"):
+        if lang == "hi":
+            full_answer = "शुक्रिया, अच्छा दिन हो!"
+        else:
+            full_answer = "Thanks, have a great day!"
+        hangup = True
+        print(f"FORCED GOODBYE: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+        sessions[call_id]["force_goodbye"] = False
+        sessions[call_id]["no_count"] = 0
+
+        output_file = f"audio/{call_id}.wav"
+        tts_lang = _get_tts_lang(lang, full_answer)
+        try:
+            speak(full_answer, output_file, tts_lang)
+        except Exception as e:
+            print("TTS ERROR:", e)
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": True,
+                "lang": lang,
+            }
+
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": output_file,
+            "segments": [(full_answer, output_file)],
+            "hangup": True,
+            "lang": lang,
+        }
 
     print("STEP 2: LLM (STREAMING)")
 
