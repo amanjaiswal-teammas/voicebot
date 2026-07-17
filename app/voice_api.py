@@ -130,9 +130,25 @@ def _preload_greeting():
     print("PRELOAD: All greetings cached.")
 
 
+def _warmup_ollama():
+    import requests
+    from .config import OLLAMA_HOST, MODEL_NAME
+    try:
+        requests.post(
+            f"{OLLAMA_HOST}/api/chat",
+            json={"model": MODEL_NAME, "messages": [{"role": "user", "content": "hi"}], "stream": False,
+                  "options": {"num_predict": 1, "num_ctx": 256}},
+            timeout=60,
+        )
+        print("WARMUP: Ollama model loaded into GPU.")
+    except Exception as e:
+        print(f"WARMUP FAILED: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     _preload_greeting()
+    _warmup_ollama()
 
 
 @app.post("/check-speech")

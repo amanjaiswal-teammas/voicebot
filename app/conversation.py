@@ -139,8 +139,12 @@ def process_call(
 
     text_lower = caller_text.lower().strip()
     is_rejection = bool(re.search(
-        r"\b(nahi|nahi|nahin|nahi chahiye|mana hai|nahi lena|no|not interested|skip|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-        r"नहीं|नहीं चाहिए|मना है|नहीं लेना|नहीं चाहते|नहीं मंगता|नहीं करना|बिल्कुल नहीं|एकदम नहीं)\b",
+        r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
+        r"नहीं|नहीं\s*चाहिए|मना\s*है|नहीं\s*लेना|नहीं\s*चाहते|नहीं\s*मंगता|नहीं\s*करना|बिल्कुल\s*नहीं|एकदम\s*नहीं|"
+        r"नहीं\s*जी|नहीं\s*समझ|नहीं\s*आओर|नहीं\s*चाहें|नहीं\s*सुनना)",
+        text_lower
+    )) or bool(re.search(
+        r"\b(no|skip|not interested)\b",
         text_lower
     ))
     if is_rejection:
