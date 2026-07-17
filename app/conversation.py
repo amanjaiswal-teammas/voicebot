@@ -151,6 +151,10 @@ def process_call(
             add_message(call_id, "system",
                 "[Customer has refused twice now. You MUST say goodbye immediately. "
                 "Do NOT ask for reasons or pitch again. Just say goodbye warmly in their language.]")
+        else:
+            add_message(call_id, "system",
+                "[Customer refused. You MUST ask for the reason first. "
+                "Do NOT say goodbye yet. Ask: 'क्या वजह है?' or 'May I know the reason?']")
     else:
         sessions[call_id]["no_count"] = 0
 
