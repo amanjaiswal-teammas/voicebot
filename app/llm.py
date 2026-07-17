@@ -14,7 +14,8 @@ HINDI_INSTRUCTION = (
     "STRICT RULES:\n"
     "- Use ONLY Devanagari script for Hindi words.\n"
     "- Keep product names (Supreme Perfume Box, PhonePe) in English.\n"
-    "- Do NOT make up or invent any words. Use only real Hindi words.\n"
+    "- Do NOT make up or invent any words or numbers. Use only what is in the PRODUCTS section.\n"
+    "- Do NOT invent product features. The product has exactly 4 perfumes, that's it.\n"
     "- Keep responses SHORT: 1-2 sentences max. This is a phone call.\n"
     "- Do NOT skip conversation steps. Follow the sales flow step by step.\n"
     "- When customer says 'yes/tell me', first explain the product, THEN ask if they want to order.\n"
@@ -25,7 +26,8 @@ HINDI_INSTRUCTION = (
 ENGLISH_INSTRUCTION = (
     "\n\n== ENGLISH RESPONSE MODE ==\n"
     "The customer is speaking English. "
-    "Reply in English only. Keep responses SHORT: 1-2 sentences max."
+    "Reply in English only. Keep responses SHORT: 1-2 sentences max.\n"
+    "Do NOT invent product features. The product has exactly 4 perfumes, that's it.\n"
 )
 
 
@@ -55,7 +57,7 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 60,
+            "num_predict": 100,
             "num_ctx": 1536,
             "repeat_penalty": 1.0,
             "top_p": 0.8,
@@ -123,7 +125,7 @@ def ask_llm_stream(messages, lang="en"):
         "stream": True,
         "options": {
             "temperature": 0.3,
-            "num_predict": 60,
+            "num_predict": 100,
             "num_ctx": 1536,
             "repeat_penalty": 1.0,
             "top_p": 0.8,
