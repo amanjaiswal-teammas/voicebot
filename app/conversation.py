@@ -147,11 +147,12 @@ def process_call(
     if not is_lang_switch:
         is_rejection = bool(re.search(
             r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-            r"नहीं\s*चाहिए|मना\s*है|नहीं\s*लेना|नहीं\s*चाहते|नहीं\s*मंगता|नहीं\s*करना|बिल्कुल\s*नहीं|एकदम\s*नहीं|"
-            r"नहीं\s*समझ|नहीं\s*सुनना|नहीं\s*करूँ|नहीं\s*करूंगा|नहीं\s*करूंगी)",
+            r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
+            r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+समझ|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
+            r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत)",
             text_lower
         )) or bool(re.search(
-            r"\b(no|skip|not interested)\b",
+            r"\b(no|skip|not interested|don'?t\s*want)\b",
             text_lower
         ))
 
