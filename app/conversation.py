@@ -149,7 +149,8 @@ def process_call(
             r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
             r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
             r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+समझ|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
-            r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत)",
+            r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
+            r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी)",
             text_lower
         )) or bool(re.search(
             r"\b(no|skip|not interested|don'?t\s*want)\b",
@@ -168,12 +169,12 @@ def process_call(
         else:
             if lang == "hi":
                 add_message(call_id, "system",
-                    "[Customer refused. You MUST ask for the reason in Hindi only. "
-                    "Say: 'ठीक है, क्या वजह है?' — nothing else.]")
+                    "[Customer refused for the FIRST time. You MUST ask for the reason. Do NOT say goodbye. "
+                    "Say EXACTLY: 'ठीक है, क्या वजह है?' — nothing else.]")
             else:
                 add_message(call_id, "system",
-                    "[Customer refused. You MUST ask for the reason in English only. "
-                    "Say: 'No problem. May I know why?' — nothing else.]")
+                    "[Customer refused for the FIRST time. You MUST ask for the reason. Do NOT say goodbye. "
+                    "Say EXACTLY: 'No problem. May I know why?' — nothing else.]")
     else:
         sessions[call_id]["no_count"] = 0
 
@@ -266,7 +267,7 @@ def process_call(
             "aapka din ho", "acha din ho", "din ho achha",
             "aapka time ke liye thank", "thank you for your time",
             "अच्छा दिन हो", "दिन अच्छा हो", "आपका दिन हो",
-            "शुक्रिया", "अलविदा",
+            "शुक्रिया, अच्छा दिन", "शुक्रिया,अच्छा दिन", "अलविदा",
         ]
         all_goodbye = goodbye_words_en + goodbye_words_hi
         if any(w in caller_text.lower() for w in all_goodbye):
