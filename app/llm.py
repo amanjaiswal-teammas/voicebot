@@ -55,8 +55,8 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 100,
-            "num_ctx": 2048,
+            "num_predict": 60,
+            "num_ctx": 1536,
             "repeat_penalty": 1.0,
             "top_p": 0.8,
             "top_k": 20,
@@ -123,8 +123,8 @@ def ask_llm_stream(messages, lang="en"):
         "stream": True,
         "options": {
             "temperature": 0.3,
-            "num_predict": 100,
-            "num_ctx": 2048,
+            "num_predict": 60,
+            "num_ctx": 1536,
             "repeat_penalty": 1.0,
             "top_p": 0.8,
             "top_k": 20,
