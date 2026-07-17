@@ -55,11 +55,11 @@ def ask_llm(messages, lang="en"):
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 130,
-            "num_ctx": 2048,
-            "repeat_penalty": 1.1,
-            "top_p": 0.9,
-            "top_k": 40,
+            "num_predict": 80,
+            "num_ctx": 1024,
+            "repeat_penalty": 1.0,
+            "top_p": 0.8,
+            "top_k": 20,
         }
     }
 
@@ -123,11 +123,11 @@ def ask_llm_stream(messages, lang="en"):
         "stream": True,
         "options": {
             "temperature": 0.3,
-            "num_predict": 130,
-            "num_ctx": 2048,
-            "repeat_penalty": 1.1,
-            "top_p": 0.9,
-            "top_k": 40,
+            "num_predict": 80,
+            "num_ctx": 1024,
+            "repeat_penalty": 1.0,
+            "top_p": 0.8,
+            "top_k": 20,
         }
     }
 

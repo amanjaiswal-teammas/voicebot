@@ -177,7 +177,7 @@ def process_call(
 
     history = get_history(call_id)
 
-    history = history[-6:]
+    history = history[-4:]
 
     llm_start = time.time()
 
