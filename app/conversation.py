@@ -13,6 +13,72 @@ import os
 
 SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na"}
 
+PITCH_HI = "Supreme Perfume Box — 4 प्रीमियम परफ्यूम्स Rs 1,599 में, 60% छूट। ऑर्डर करेंगे?"
+PITCH_EN = "Supreme Perfume Box — 4 perfumes, Rs 1,599, 60% off. Want to order?"
+
+ASK_REASON_HI = "ठीक है, क्या वजह है?"
+ASK_REASON_EN = "No problem. May I know why?"
+
+GOODBYE_HI = "शुक्रिया, अच्छा दिन हो!"
+GOODBYE_EN = "Thanks, have a great day!"
+
+INTEREST_RE = re.compile(
+    r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
+    r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
+    r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए)",
+    re.I
+)
+
+MALE_TO_FEMALE = [
+    (r'हूँ', 'हूँ'),
+    (r'रहा हूँ', 'रही हूँ'),
+    (r'रहा हूं', 'रही हूँ'),
+    (r'पा रहा हूं', 'पा रही हूँ'),
+    (r'पा रहा हूँ', 'पा रही हूँ'),
+    (r'गया हूँ', 'गई हूँ'),
+    (r'गया हूं', 'गई हूँ'),
+    (r'आया हूँ', 'आई हूँ'),
+    (r'आया हूं', 'आई हूँ'),
+    (r'बता रहा हूँ', 'बता रही हूँ'),
+    (r'बता रहा हूं', 'बता रही हूँ'),
+    (r'कर रहा हूँ', 'कर रही हूँ'),
+    (r'कर रहा हूं', 'कर रही हूँ'),
+    (r'समझ रहा हूँ', 'समझ रही हूँ'),
+    (r'समझ रहा हूं', 'समझ रही हूँ'),
+    (r'सोच रहा हूँ', 'सोच रही हूँ'),
+    (r'सोच रहा हूं', 'सोच रही हूँ'),
+    (r'ले रहा हूँ', 'ले रही हूँ'),
+    (r'ले रहा हूं', 'ले रही हूँ'),
+    (r'दे रहा हूँ', 'दे रही हूँ'),
+    (r'दे रहा हूं', 'दे रही हूँ'),
+    (r'बोल रहा हूँ', 'बोल रही हूँ'),
+    (r'बोल रहा हूं', 'बोल रही हूँ'),
+    (r'सुन रहा हूँ', 'सुन रही हूँ'),
+    (r'सुन रहा हूं', 'सुन रही हूँ'),
+    (r'मान रहा हूँ', 'मान रही हूँ'),
+    (r'मान रहा हूं', 'मान रही हूँ'),
+    (r'चाह रहा हूँ', 'चाह रही हूँ'),
+    (r'चाह रहा हूं', 'चाह रही हूँ'),
+    (r'हो गया हूँ', 'हो गई हूँ'),
+    (r'हो गया हूं', 'हो गई हूँ'),
+    (r'कह रहा हूँ', 'कह रही हूँ'),
+    (r'कह रहा हूं', 'कह रही हूँ'),
+]
+
+
+def _fix_hindi_gender(text):
+    if not text:
+        return text
+    for pattern, replacement in MALE_TO_FEMALE:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+def _post_process(text, lang):
+    if lang == "hi":
+        text = _fix_hindi_gender(text)
+    return text
+
 
 def _get_tts_lang(lang, text):
     if lang in SUPERTONIC_LANGS:
@@ -144,53 +210,100 @@ def process_call(
     is_lang_switch = detect_language_switch(caller_text) is not None
 
     is_rejection = False
+    is_interest = False
     if not is_lang_switch:
-        is_rejection = bool(re.search(
-            r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-            r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
-            r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+समझ|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
-            r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
-            r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
-            r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
-            r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त)",
-            text_lower
-        )) or bool(re.search(
-            r"\b(no|skip|not interested|don'?t\s*want)\b",
-            text_lower
-        ))
+        is_interest = bool(INTEREST_RE.search(caller_text))
+        if not is_interest:
+            is_rejection = bool(re.search(
+                r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
+                r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
+                r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
+                r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
+                r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
+                r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
+                r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त)",
+                text_lower
+            )) or bool(re.search(
+                r"\b(no|skip|not interested|don'?t\s*want)\b",
+                text_lower
+            ))
 
     if is_rejection:
         sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
+        sessions[call_id]["awaiting_reason"] = False
         no_count = sessions[call_id]["no_count"]
         print(f"REJECTION #{no_count}: {caller_text}")
         if no_count >= 2:
-            add_message(call_id, "system",
-                "[Customer has refused twice. STOP everything. You MUST respond with ONLY a goodbye message like 'शुक्रिया, अच्छा दिन हो!' or 'Thank you, have a great day!'. "
-                "Do NOT ask for reasons. Do NOT pitch. Do NOT continue the conversation. ONLY say goodbye.]")
-            sessions[call_id]["force_goodbye"] = True
+            full_answer = GOODBYE_HI if lang == "hi" else GOODBYE_EN
+            hangup = True
+            print(f"FORCED GOODBYE (rejection #{no_count}): {full_answer}")
+            add_message(call_id, "assistant", full_answer)
+            sessions[call_id]["no_count"] = 0
+            sessions[call_id]["awaiting_reason"] = False
+            output_file = f"audio/{call_id}.wav"
+            tts_lang = _get_tts_lang(lang, full_answer)
+            try:
+                speak(full_answer, output_file, tts_lang)
+            except Exception as e:
+                print("TTS ERROR:", e)
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": None,
+                    "segments": [],
+                    "hangup": True,
+                    "lang": lang,
+                }
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": output_file,
+                "segments": [(full_answer, output_file)],
+                "hangup": True,
+                "lang": lang,
+            }
         else:
-            if lang == "hi":
-                add_message(call_id, "system",
-                    "[Customer refused for the FIRST time. You MUST ask for the reason. Do NOT say goodbye. "
-                    "Say EXACTLY: 'ठीक है, क्या वजह है?' — nothing else.]")
-            else:
-                add_message(call_id, "system",
-                    "[Customer refused for the FIRST time. You MUST ask for the reason. Do NOT say goodbye. "
-                    "Say EXACTLY: 'No problem. May I know why?' — nothing else.]")
+            full_answer = ASK_REASON_HI if lang == "hi" else ASK_REASON_EN
+            print(f"FORCED ASK REASON (rejection #{no_count}): {full_answer}")
+            add_message(call_id, "assistant", full_answer)
+            sessions[call_id]["awaiting_reason"] = True
+            output_file = f"audio/{call_id}.wav"
+            tts_lang = _get_tts_lang(lang, full_answer)
+            try:
+                speak(full_answer, output_file, tts_lang)
+            except Exception as e:
+                print("TTS ERROR:", e)
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": None,
+                    "segments": [],
+                    "hangup": False,
+                    "lang": lang,
+                }
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": output_file,
+                "segments": [(full_answer, output_file)],
+                "hangup": False,
+                "lang": lang,
+            }
     else:
         sessions[call_id]["no_count"] = 0
 
     if interrupted_text:
-        if sessions[call_id].get("force_goodbye"):
-            pass
-        else:
-            context = (
-                f"[Customer interrupted. "
-                f"Customer said: \"{caller_text}\". "
-                f"Respond to what the customer said.]"
-            )
-            print("INTERRUPTED CONTEXT:", context)
-            add_message(call_id, "system", context)
+        context = (
+            f"[Customer interrupted. "
+            f"Customer said: \"{caller_text}\". "
+            f"Respond to what the customer said.]"
+        )
+        print("INTERRUPTED CONTEXT:", context)
+        add_message(call_id, "system", context)
 
     add_message(
         call_id,
@@ -198,17 +311,29 @@ def process_call(
         caller_text
     )
 
-    if sessions[call_id].get("force_goodbye"):
+    if sessions[call_id].get("awaiting_reason") and not is_rejection:
+        sessions[call_id]["awaiting_reason"] = False
         if lang == "hi":
-            full_answer = "शुक्रिया, अच्छा दिन हो!"
+            reason_msg = (
+                "[Customer just gave a reason for refusing. DO NOT ask 'क्या वजह है?' again. "
+                f"Customer said: \"{caller_text}\". "
+                "Address their concern directly. If cheaper: say 'हमारे पास 60% छूट है, यह बहुत अच्छा ऑफ़र है।' "
+                "Then ask once more if they want to order. If still no, say goodbye.]"
+            )
         else:
-            full_answer = "Thanks, have a great day!"
-        hangup = True
-        print(f"FORCED GOODBYE: {full_answer}")
-        add_message(call_id, "assistant", full_answer)
-        sessions[call_id]["force_goodbye"] = False
-        sessions[call_id]["no_count"] = 0
+            reason_msg = (
+                "[Customer just gave a reason for refusing. DO NOT ask 'May I know why?' again. "
+                f"Customer said: \"{caller_text}\". "
+                "Address their concern directly. If cheaper: say 'We have 60% off, that's a great deal!' "
+                "Then ask once more if they want to order. If still no, say goodbye.]"
+            )
+        print("REASON GIVEN — injecting objection handler")
+        add_message(call_id, "system", reason_msg)
 
+    if is_interest:
+        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+        print(f"INTEREST DETECTED — BYPASSING LLM, PITCH: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
         output_file = f"audio/{call_id}.wav"
         tts_lang = _get_tts_lang(lang, full_answer)
         try:
@@ -221,17 +346,16 @@ def process_call(
                 "bot": full_answer,
                 "audio": None,
                 "segments": [],
-                "hangup": True,
+                "hangup": False,
                 "lang": lang,
             }
-
         return {
             "call_id": call_id,
             "caller": caller_text,
             "bot": full_answer,
             "audio": output_file,
             "segments": [(full_answer, output_file)],
-            "hangup": True,
+            "hangup": False,
             "lang": lang,
         }
 
@@ -274,6 +398,8 @@ def process_call(
     if not full_answer:
         full_answer = pending_text
 
+    full_answer = _post_process(full_answer, lang)
+
     if pending_text and not segments:
         tts_lang = _get_tts_lang(lang, pending_text)
         seg_path = f"audio/{call_id}_stream_0.wav"
@@ -291,11 +417,6 @@ def process_call(
 
     print("BOT:", full_answer)
     print(f"LLM_HANGUP={hangup}")
-
-    if sessions[call_id].get("force_goodbye"):
-        hangup = True
-        sessions[call_id]["force_goodbye"] = False
-        print("HANGUP FORCED (rejection #2)")
 
     if not hangup:
         goodbye_words_en = [
