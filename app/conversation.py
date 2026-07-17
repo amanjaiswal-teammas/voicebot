@@ -22,6 +22,54 @@ ASK_REASON_EN = "No problem. May I know why?"
 GOODBYE_HI = "शुक्रिया, अच्छा दिन हो!"
 GOODBYE_EN = "Thanks, have a great day!"
 
+ASK_REPEAT_HI = "माफ़ कीजिए, क्या आप दोबारा बोल सकती हैं?"
+ASK_REPEAT_EN = "Sorry, could you repeat that?"
+
+REPEAT_ASKERS = re.compile(
+    r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|sunao|suno|bolo|haan ji|hanji|"
+    r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|"
+    r"nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi karna|nahi karunga|nahi karungi|"
+    r"नहीं|चाहिए|लेना|चाहते|करना|मना|बिल्कुल|एकदम|"
+    r"ना\s*चाहेंगे|ना\s*चाहूँगा|ना\s*चाहूंगी|"
+    r"order|place|confirm|cancel|email|name|address|phone|payment|pincode|"
+    r"ऑर्डर|ईमेल|नाम|पता|फ़ोन|पेमेंट|पिनकोड|"
+    r"क्यों|क्या|कैसे|कहाँ|कब|कौन|कितना|"
+    r"हाँ|ना|जी|बिल्कुल|एकदम|ठीक|अच्छा|बुरा|"
+    r"समझ|समझे|सुन|सुना|देख|बोल|बता|कर|ले|दे|जा|आ|खा|पी|"
+    r"supreme|perfume|box|perfumes|off|order|"
+    r"english|इंग्लिश|इंगलीज|इंगलेश|इंडिज|hindi|हिंदी)",
+    re.I
+)
+
+
+KNOWN_WORDS = set(
+    "हाँ ना जी बिल्कुल एकदम ठीक अच्छा बुरा समझ समझे सुन सुना देख बोल बता कर ले दे जा आ खा पी "
+    "चाहिए लेना चाहते करना मना बोलो करो करे करता करती बताओ बताइए "
+    "है हो हैं था थी होगा होगी होगे करेंगे करूँगा करूंगी दूँगा दूंगी "
+    "क्यों क्या कैसे कहाँ कब कौन कितना कौनसा "
+    "क्या है कैसे हैं क्यों नहीं कहाँ कब कौन "
+    "supreme perfume box perfumes off order email name address phone payment pincode "
+    "english hindi इंग्लिश हिंदी "
+    "ऑर्डर ईमेल नाम पता फ़ोन पेमेंट पिनकोड "
+    "बताइए बताईये बता दो आगे सुनिए बोलिए बताओ "
+    "nahi nahin chahiye mana lena chahte karna karunga karungi "
+    "nahi chahiye mana hai nahi lena nahi chahte nahi karna "
+    "nahi karunga nahi karungi bilkul nahi ekdum nahi "
+    "order place confirm cancel ".split()
+)
+
+
+def _is_garbled(text):
+    words = re.findall(r'[\u0900-\u097F]+|[a-zA-Z]+', text.lower())
+    if not words:
+        return True
+    known_count = sum(1 for w in words if w in KNOWN_WORDS)
+    ratio = known_count / len(words) if words else 0
+    if ratio < 0.3 and len(words) >= 2:
+        print(f"GARBLED CHECK: {len(words)} words, {known_count} known, ratio={ratio:.2f}")
+        return True
+    return False
+
 INTEREST_RE = re.compile(
     r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
     r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
@@ -63,6 +111,28 @@ MALE_TO_FEMALE = [
     (r'हो गया हूं', 'हो गई हूँ'),
     (r'कह रहा हूँ', 'कह रही हूँ'),
     (r'कह रहा हूं', 'कह रही हूँ'),
+    (r'कर सकता हूँ', 'कर सकती हूँ'),
+    (r'कर सकता हूं', 'कर सकती हूँ'),
+    (r'दे सकता हूँ', 'दे सकती हूँ'),
+    (r'दे सकता हूं', 'दे सकती हूँ'),
+    (r'बता सकता हूँ', 'बता सकती हूँ'),
+    (r'बता सकता हूं', 'बता सकती हूँ'),
+    (r'करूँगा', 'करूँगी'),
+    (r'करूंगा', 'करूंगी'),
+    (r'दूँगा', 'दूँगी'),
+    (r'दूंगा', 'दूंगी'),
+    (r'बताऊँगा', 'बताऊँगी'),
+    (r'बताऊंगा', 'बताऊंगी'),
+    (r'लूँगा', 'लूँगी'),
+    (r'लूंगा', 'लूंगी'),
+    (r'चाहूँगा', 'चाहूँगी'),
+    (r'चाहूंगा', 'चाहूंगी'),
+    (r'मदद कर सकता हूँ', 'मदद कर सकती हूँ'),
+    (r'मदद कर सकता हूं', 'मदद कर सकती हूँ'),
+    (r'डालता हूँ', 'डालती हूँ'),
+    (r'डालता हूं', 'डालती हूँ'),
+    (r'बताता हूँ', 'बताती हूँ'),
+    (r'बताता हूं', 'बताती हूँ'),
 ]
 
 
@@ -74,10 +144,22 @@ def _fix_hindi_gender(text):
     return text
 
 
+def _fix_mid_greeting(text):
+    if not text:
+        return text
+    text = re.sub(r'^(नमस्ते!\s*)', '', text)
+    text = re.sub(r'^(Good morning!\s*)', '', text)
+    text = re.sub(r'^(Good evening!\s*)', '', text)
+    text = re.sub(r'^(Hello!\s*)', '', text)
+    text = re.sub(r'^(नमस्ते\s+)', '', text)
+    return text
+
+
 def _post_process(text, lang):
     if lang == "hi":
         text = _fix_hindi_gender(text)
-    return text
+    text = _fix_mid_greeting(text)
+    return text.strip()
 
 
 def _get_tts_lang(lang, text):
@@ -215,9 +297,10 @@ def process_call(
         is_interest = bool(INTEREST_RE.search(caller_text))
         if not is_interest:
             is_rejection = bool(re.search(
-                r"(nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-                r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
-                r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
+            r"(nahi|nahin|na chahiye|na chahte|na karunga|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
+            r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
+            r"ना[\s,।.!]+चाहेंगे|ना[\s,।.!]+चाहूँगा|ना[\s,।.!]+चाहूंगी|ना[\s,।.!]+करेंगे|ना[\s,।.!]+करूँगा|ना[\s,।.!]+करूंगी|ना[\s,।.!]+लेंगे|ना[\s,।.!]+लूँगा|ना[\s,।.!]+लूंगी|"
+            r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
                 r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
                 r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
                 r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
@@ -297,19 +380,49 @@ def process_call(
         sessions[call_id]["no_count"] = 0
 
     if interrupted_text:
-        context = (
-            f"[Customer interrupted. "
-            f"Customer said: \"{caller_text}\". "
-            f"Respond to what the customer said.]"
-        )
-        print("INTERRUPTED CONTEXT:", context)
-        add_message(call_id, "system", context)
+        if not is_lang_switch:
+            context = (
+                f"[Customer interrupted. "
+                f"Customer said: \"{caller_text}\". "
+                f"Respond to what the customer said.]"
+            )
+            print("INTERRUPTED CONTEXT:", context)
+            add_message(call_id, "system", context)
 
     add_message(
         call_id,
         "user",
         caller_text
     )
+
+    if is_lang_switch:
+        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+        print(f"LANG SWITCH → {lang} — BYPASSING LLM, PITCH: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+        output_file = f"audio/{call_id}.wav"
+        tts_lang = _get_tts_lang(lang, full_answer)
+        try:
+            speak(full_answer, output_file, tts_lang)
+        except Exception as e:
+            print("TTS ERROR:", e)
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": False,
+                "lang": lang,
+            }
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": output_file,
+            "segments": [(full_answer, output_file)],
+            "hangup": False,
+            "lang": lang,
+        }
 
     if sessions[call_id].get("awaiting_reason") and not is_rejection:
         sessions[call_id]["awaiting_reason"] = False
@@ -333,6 +446,35 @@ def process_call(
     if is_interest:
         full_answer = PITCH_HI if lang == "hi" else PITCH_EN
         print(f"INTEREST DETECTED — BYPASSING LLM, PITCH: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+        output_file = f"audio/{call_id}.wav"
+        tts_lang = _get_tts_lang(lang, full_answer)
+        try:
+            speak(full_answer, output_file, tts_lang)
+        except Exception as e:
+            print("TTS ERROR:", e)
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": False,
+                "lang": lang,
+            }
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": output_file,
+            "segments": [(full_answer, output_file)],
+            "hangup": False,
+            "lang": lang,
+        }
+
+    if _is_garbled(caller_text):
+        full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
+        print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
         add_message(call_id, "assistant", full_answer)
         output_file = f"audio/{call_id}.wav"
         tts_lang = _get_tts_lang(lang, full_answer)
