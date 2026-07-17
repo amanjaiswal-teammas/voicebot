@@ -137,7 +137,7 @@ def _warmup_ollama():
         requests.post(
             f"{OLLAMA_HOST}/api/chat",
             json={"model": MODEL_NAME, "messages": [{"role": "user", "content": "hi"}], "stream": False,
-                  "options": {"num_predict": 1, "num_ctx": 256}},
+                  "options": {"num_predict": 1, "num_ctx": 1536}},
             timeout=60,
         )
         print("WARMUP: Ollama model loaded into GPU.")
