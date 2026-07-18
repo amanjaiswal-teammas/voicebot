@@ -361,7 +361,7 @@ def process_call(
                 text_lower
             ))
         if not is_rejection and not sessions[call_id].get("awaiting_reason"):
-            if re.search(r"\bनहीं\b", caller_text):
+            if re.search(r"(?<!\S)नहीं(?!\S)", caller_text):
                 is_rejection = True
         if not is_rejection and len(caller_text.split()) <= 12:
             is_interest = bool(INTEREST_RE.search(caller_text))
@@ -369,6 +369,7 @@ def process_call(
     if is_rejection:
         sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
         sessions[call_id]["awaiting_reason"] = False
+        sessions[call_id]["order_collecting"] = False
         no_count = sessions[call_id]["no_count"]
         print(f"REJECTION #{no_count}: {caller_text}")
         if no_count >= 2:
@@ -499,7 +500,7 @@ def process_call(
         print("REASON GIVEN — injecting objection handler")
         add_message(call_id, "system", reason_msg)
 
-    if is_interest and not _was_awaiting_reason:
+    if is_interest and not _was_awaiting_reason and not sessions[call_id].get("order_collecting"):
         explicit_request = bool(re.search(
             r"(bataiye|batai[eē]|aage bata|bata de|bata do|sunao|suno|bolo|tell me|go on|continue|repeat|"
             r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|"
@@ -525,6 +526,8 @@ def process_call(
             action = "ORDER COLLECT" if is_order_collect else "PITCH"
             print(f"INTEREST DETECTED — BYPASSING LLM, {action}: {full_answer}")
             add_message(call_id, "assistant", full_answer)
+            if is_order_collect:
+                sessions[call_id]["order_collecting"] = True
             output_file = f"audio/{call_id}.wav"
             tts_lang = _get_tts_lang(lang, full_answer)
             try:
@@ -551,7 +554,7 @@ def process_call(
             }
 
     is_order_intent = bool(ORDER_INTENT_RE.search(caller_text))
-    if is_order_intent:
+    if is_order_intent and not sessions[call_id].get("order_collecting"):
         pitch_given = any(
             PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
             for m in sessions[call_id].get("messages", [])
@@ -561,6 +564,7 @@ def process_call(
             full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
             print(f"ORDER INTENT — BYPASSING LLM, COLLECTING DETAILS: {full_answer}")
             add_message(call_id, "assistant", full_answer)
+            sessions[call_id]["order_collecting"] = True
             output_file = f"audio/{call_id}.wav"
             tts_lang = _get_tts_lang(lang, full_answer)
             try:
@@ -614,7 +618,27 @@ def process_call(
                 "lang": lang,
             }
 
-    if _is_garbled(caller_text) and not sessions[call_id].get("awaiting_reason"):
+    if sessions[call_id].get("order_collecting") and not is_rejection:
+        if lang == "hi":
+            collect_msg = (
+                "[Customer is now sharing their order details. Extract name, phone number, email, and address with pincode from what they said. "
+                f"Customer said: \"{caller_text}\". "
+                "If they gave a name, confirm it and ask for phone/email/address. "
+                "If they gave phone, confirm it and ask for remaining details. "
+                "If they gave all details, summarize and confirm the order.]"
+            )
+        else:
+            collect_msg = (
+                "[Customer is now sharing their order details. Extract name, phone number, email, and address with pincode from what they said. "
+                f"Customer said: \"{caller_text}\". "
+                "If they gave a name, confirm it and ask for phone/email/address. "
+                "If they gave phone, confirm it and ask for remaining details. "
+                "If they gave all details, summarize and confirm the order.]"
+            )
+        print(f"ORDER COLLECTING — routing to LLM for extraction: {caller_text}")
+        add_message(call_id, "system", collect_msg)
+
+    if _is_garbled(caller_text) and not sessions[call_id].get("awaiting_reason") and not sessions[call_id].get("order_collecting"):
         full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
         print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
         add_message(call_id, "assistant", full_answer)
