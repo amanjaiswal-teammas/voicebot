@@ -53,7 +53,7 @@ KNOWN_WORDS = set(
     "क्या है कैसे हैं क्यों नहीं कहाँ कब कौन "
     "supreme perfume box perfumes off order email name address phone payment pincode "
     "english hindi इंग्लिश हिंदी अंग्रेज़ी "
-    "ऑर्डर आर्डर ईमेल नाम पता फ़ोन पेमेंट पिनकोड "
+    "ऑर्डर आर्डर ईमेल नाम पता फ़ोन फोन पेमेंट पिनकोड "
     "बताइए बताईये बता दो आगे सुनिए बोलिए बताओ "
     "nahi nahin chahiye mana lena chahte karna karunga karungi "
     "nahi chahiye mana hai nahi lena nahi chahte nahi karna "
@@ -106,7 +106,7 @@ INTEREST_RE = re.compile(
     r"can.t hear|can.t listen|voice not|no voice|audio not|not coming|not audible|"
     r"बताइए|बताईये|बताई\w*|बदाई\w*|बदाई\s+ये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
     r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
-    r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|"
+    r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|समझ\s+नहीं|"
     r"आवाज़?\s+नहीं|आवाज़?\s+नहीं\s+आ|आवाज़?\s+नहीं\s+आरी|आवाज़?\s+नहीं\s+आ रही|"
     r"क्या\s+कह\s+रही|क्या\s+कह\s+रहे|क्या\s+बोल\s+रही|क्या\s+बोल\s+रहे|क्या\s+बात\s+कर\s+रही|"
     r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
@@ -352,12 +352,17 @@ def process_call(
                 r"नहीं[\s,।.!]+बोल|नहीं[\s,।.!]+चाहिए\w*|नहीं[\s,।.!]+लगता|"
                 r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
                 r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
-                r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त)",
+                r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त|"
+                r"फोन\s+रख\s+द[ेई]|फोन\s+रक\s+द[ेई]|फ़ोन\s+रख\s+द[ेई]|"
+                r"बात\s+नहीं\s+करन[ाेी]|बात\s+नहीं\s+करूंग[ाी]|बात\s+नहीं\s+करेंग[ाेी])",
                 text_lower
             )) or bool(re.search(
                 r"\b(no|skip|not interested|don'?t\s*want)\b",
                 text_lower
             ))
+        if not is_rejection and not sessions[call_id].get("awaiting_reason"):
+            if re.search(r"\bनहीं\b", caller_text):
+                is_rejection = True
         if not is_rejection and len(caller_text.split()) <= 12:
             is_interest = bool(INTEREST_RE.search(caller_text))
 
@@ -474,7 +479,8 @@ def process_call(
             "lang": lang,
         }
 
-    if sessions[call_id].get("awaiting_reason") and not is_rejection:
+    _was_awaiting_reason = sessions[call_id].get("awaiting_reason", False)
+    if _was_awaiting_reason and not is_rejection:
         sessions[call_id]["awaiting_reason"] = False
         if lang == "hi":
             reason_msg = (
@@ -493,7 +499,7 @@ def process_call(
         print("REASON GIVEN — injecting objection handler")
         add_message(call_id, "system", reason_msg)
 
-    if is_interest:
+    if is_interest and not _was_awaiting_reason:
         explicit_request = bool(re.search(
             r"(bataiye|batai[eē]|aage bata|bata de|bata do|sunao|suno|bolo|tell me|go on|continue|repeat|"
             r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|"
