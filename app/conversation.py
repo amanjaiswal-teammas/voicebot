@@ -60,6 +60,8 @@ KNOWN_WORDS = set(
 
 
 def _is_garbled(text):
+    if not re.search(r'[\u0900-\u097F]', text):
+        return False
     words = re.findall(r'[\u0900-\u097F]+|[a-zA-Z]+', text.lower())
     if not words:
         return True
@@ -294,9 +296,7 @@ def process_call(
     is_rejection = False
     is_interest = False
     if not is_lang_switch:
-        is_interest = bool(INTEREST_RE.search(caller_text))
-        if not is_interest:
-            is_rejection = bool(re.search(
+        is_rejection = bool(re.search(
             r"(nahi|nahin|na chahiye|na chahte|na karunga|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
             r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
             r"ना[\s,।.!]+चाहेंगे|ना[\s,।.!]+चाहूँगा|ना[\s,।.!]+चाहूंगी|ना[\s,।.!]+करेंगे|ना[\s,।.!]+करूँगा|ना[\s,।.!]+करूंगी|ना[\s,।.!]+लेंगे|ना[\s,।.!]+लूँगा|ना[\s,।.!]+लूंगी|"
@@ -310,6 +310,8 @@ def process_call(
                 r"\b(no|skip|not interested|don'?t\s*want)\b",
                 text_lower
             ))
+        if not is_rejection and len(caller_text.split()) <= 8:
+            is_interest = bool(INTEREST_RE.search(caller_text))
 
     if is_rejection:
         sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
@@ -520,27 +522,26 @@ def process_call(
         elapsed = int((time.time() - llm_start) * 1000)
 
         if is_done:
-            full_answer = sentence
+            full_answer = _post_process(sentence, lang)
             hangup = seg_hangup
             print(f"LLM DONE: {elapsed}ms answer_len={len(full_answer)}")
         else:
-            pending_text += (" " if pending_text else "") + sentence
-            print(f"LLM SENTENCE ({elapsed}ms): {sentence[:60]}...")
+            processed = _post_process(sentence, lang)
+            pending_text += (" " if pending_text else "") + processed
+            print(f"LLM SENTENCE ({elapsed}ms): {processed[:60]}...")
 
-            tts_lang = _get_tts_lang(lang, sentence)
+            tts_lang = _get_tts_lang(lang, processed)
             seg_idx = len(segments)
             seg_path = f"audio/{call_id}_stream_{seg_idx}.wav"
             try:
-                speak(sentence, seg_path, tts_lang)
-                segments.append((sentence, seg_path))
+                speak(processed, seg_path, tts_lang)
+                segments.append((processed, seg_path))
                 print(f"TTS PRE-GEN: {seg_path}")
             except Exception as e:
                 print(f"TTS STREAM ERROR: {e}")
 
     if not full_answer:
         full_answer = pending_text
-
-    full_answer = _post_process(full_answer, lang)
 
     if pending_text and not segments:
         tts_lang = _get_tts_lang(lang, pending_text)
