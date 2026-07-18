@@ -80,7 +80,11 @@ def _is_garbled(text):
 
 INTEREST_RE = re.compile(
     r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
-    r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
+    r"repeat|go on|continue|what is it|what's there|what about|let me know|let's hear|i'm listening| listening| go ahead|bolo|sunao|"
+    r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|samajh mein nahi|samajh nahi aaya|samajh nahi raha|samajh nahi ho raha|samajh nahi pa rahi|"
+    r"बताइए|बताईये|बताई\w*|बदाई\w*|बदाई\s+ये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
+    r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
+    r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|"
     r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
     r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ))",
     re.I
@@ -319,7 +323,7 @@ def process_call(
                 r"\b(no|skip|not interested|don'?t\s*want)\b",
                 text_lower
             ))
-        if not is_rejection and len(caller_text.split()) <= 8:
+        if not is_rejection and len(caller_text.split()) <= 12:
             is_interest = bool(INTEREST_RE.search(caller_text))
 
     if is_rejection:
@@ -455,13 +459,27 @@ def process_call(
         add_message(call_id, "system", reason_msg)
 
     if is_interest:
-        pitch_given = any(
-            PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
-            for m in sessions[call_id].get("messages", [])
-            if m.get("role") == "assistant"
-        )
-        if not pitch_given:
+        explicit_request = bool(re.search(
+            r"(bataiye|batai[eē]|aage bata|bata de|bata do|sunao|suno|bolo|tell me|go on|continue|repeat|"
+            r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|"
+            r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|सुनिए|बोलिए|बताओ|"
+            r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
+            r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप)",
+            caller_text, re.I
+        ))
+        if explicit_request:
             full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+        else:
+            pitch_given = any(
+                PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
+                for m in sessions[call_id].get("messages", [])
+                if m.get("role") == "assistant"
+            )
+            if pitch_given:
+                full_answer = None
+            else:
+                full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+        if full_answer:
             print(f"INTEREST DETECTED — BYPASSING LLM, PITCH: {full_answer}")
             add_message(call_id, "assistant", full_answer)
             output_file = f"audio/{call_id}.wav"
