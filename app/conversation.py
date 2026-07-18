@@ -19,6 +19,8 @@ PITCH_EN = "Supreme Perfume Box — 4 perfumes, Rs 1,599, 60% off. Want to order
 ORDER_COLLECT_HI = "बहुत अच्छा! कृपया अपना नाम, फ़ोन नंबर, ईमेल और पता (पिनकोड सहित) बता दीजिए।"
 ORDER_COLLECT_EN = "Great! Please share your name, phone number, email, and address with pincode."
 
+ORDER_MAX_TURNS = 8
+
 ASK_REASON_HI = "ठीक है, क्या वजह है?"
 ASK_REASON_EN = "No problem. May I know why?"
 
@@ -216,6 +218,138 @@ def _get_tts_lang(lang, text):
     return "en"
 
 
+def _extract_order_details(text, existing):
+    details = dict(existing)
+    text_lower = text.lower().strip()
+
+    if not details.get("phone"):
+        m = re.search(r'(\d{10})', text_lower)
+        if not m:
+            m = re.search(r'(\d{5}\s?\d{5})', text_lower)
+        if not m:
+            m = re.search(r'(\d{7,9})', text_lower)
+        if not m:
+            word_to_digit = {'zero':'0','one':'1','two':'2','three':'3','four':'4',
+                'five':'5','six':'6','seven':'7','eight':'8','nine':'9',
+                'double one':'11','double two':'22','double three':'33',
+                'double four':'44','double five':'55','double six':'66',
+                'double seven':'77','double eight':'88','double nine':'99',
+                'duble one':'11','duble two':'22','duble three':'33',
+                'duble four':'44','duble five':'55','duble six':'66',
+                'duble seven':'77','duble eight':'88','duble nine':'99'}
+            digits_only = text_lower
+            for word, digit in sorted(word_to_digit.items(), key=lambda x: -len(x[0])):
+                digits_only = digits_only.replace(word, digit)
+            digits_only = re.sub(r'[^0-9]', '', digits_only)
+            if len(digits_only) >= 7:
+                m_digits = digits_only
+            else:
+                m_digits = None
+        else:
+            m_digits = m.group(1).replace(" ", "")
+        if m_digits:
+            details["phone"] = m_digits
+
+    if not details.get("email"):
+        m = re.search(r'[\w.+-]+@[\w.-]+\.\w+', text_lower)
+        if not m:
+            m = re.search(r'([\w.+-]+)\s+at\s+([\w.+-]+)\s*\.\s*(com|in|org)', text_lower)
+            if m:
+                details["email"] = f"{m.group(1)}@{m.group(2)}.{m.group(3)}"
+        else:
+            details["email"] = m.group(0)
+
+    if not details.get("pincode"):
+        m = re.search(r'\b(\d{6})\b', text)
+        if m:
+            details["pincode"] = m.group(1)
+
+    if not details.get("name"):
+        m = re.search(
+            r'(?:name\s+(?:is\s+)?|my\s+name\s+(?:is\s+)?|नाम\s+(?:है\s+)?|मेरा\s+नाम\s+|नाम\s+|नामं\s+)'
+            r'(.+?)(?:\s+(?:and|phone|email|address|pincode|पता|फोन|फ़ोन|ईमेल|नाम|पिनकोड)|\s*$)',
+            text, re.I
+        )
+        if m:
+            details["name"] = m.group(1).strip().rstrip('.,।')
+
+    if not details.get("address"):
+        m = re.search(
+            r'(?:address\s+(?:is\s+)?|my\s+address\s+(?:is\s+)?|पता\s+(?:है\s+)?|पता\s+)'
+            r'(.+?)(?:\s+(?:and|phone|email|name|pincode|फोन|फ़ोन|ईमेल|नाम|पिनकोड)|\s*$)',
+            text, re.I
+        )
+        if m:
+            addr = m.group(1).strip().rstrip('.,।')
+            if details.get("pincode") and details["pincode"] in addr:
+                addr = addr.replace(details["pincode"], "").strip().rstrip(',- ')
+            details["address"] = addr
+
+    if not details.get("address") and details.get("pincode"):
+        words = text.split()
+        for i, w in enumerate(words):
+            if re.match(r'\d{6}', w):
+                addr_words = words[max(0, i-4):i]
+                if addr_words:
+                    details["address"] = " ".join(addr_words)
+                break
+
+    return details
+
+
+def _order_needs_more(details):
+    return not all(details.get(k) for k in ("name", "phone", "email", "address", "pincode"))
+
+
+def _build_order_response(lang, details):
+    collected = []
+    if details.get("name"):
+        collected.append(details["name"])
+    if details.get("phone"):
+        collected.append(details["phone"])
+    if details.get("email"):
+        collected.append(details["email"])
+
+    missing = []
+    if not details.get("name"):
+        missing.append("नाम" if lang == "hi" else "name")
+    if not details.get("phone"):
+        missing.append("फ़ोन नंबर" if lang == "hi" else "phone number")
+    if not details.get("email"):
+        missing.append("ईमेल" if lang == "hi" else "email")
+    if not details.get("address") or not details.get("pincode"):
+        missing.append("पता (पिनकोड सहित)" if lang == "hi" else "address with pincode")
+
+    if not missing:
+        return None
+
+    if lang == "hi":
+        if collected:
+            return f"बहुत अच्छा! आपने {'/'.join(collected)} बताया। कृपया {' '.join(missing)} बता दीजिए।"
+        return ORDER_COLLECT_HI
+    else:
+        if collected:
+            return f"Got it! You shared {'/'.join(collected)}. Please provide {' '.join(missing)}."
+        return ORDER_COLLECT_EN
+
+
+def _build_order_confirmation(lang, details):
+    if lang == "hi":
+        return (
+            f"बहुत अच्छा! आपका ऑर्डर कन्फ़र्म हो गया है। "
+            f"नाम {details.get('name', '')}, फ़ोन {details.get('phone', '')}, "
+            f"ईमेल {details.get('email', '')}, पता {details.get('address', '')} {details.get('pincode', '')}। "
+            f"Supreme Perfume Box — Rs 1,599। शुक्रिया!"
+        )
+    else:
+        return (
+            f"Your order is confirmed! "
+            f"Name: {details.get('name', '')}, Phone: {details.get('phone', '')}, "
+            f"Email: {details.get('email', '')}, Address: {details.get('address', '')} {details.get('pincode', '')}. "
+            f"Supreme Perfume Box — Rs 1,599. Thank you!"
+        )
+
+
 def process_call(
     call_id,
     audio_file,
@@ -370,6 +504,8 @@ def process_call(
         sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
         sessions[call_id]["awaiting_reason"] = False
         sessions[call_id]["order_collecting"] = False
+        sessions[call_id].pop("order_details", None)
+        sessions[call_id].pop("order_turns", None)
         no_count = sessions[call_id]["no_count"]
         print(f"REJECTION #{no_count}: {caller_text}")
         if no_count >= 2:
@@ -619,24 +755,78 @@ def process_call(
             }
 
     if sessions[call_id].get("order_collecting") and not is_rejection:
-        if lang == "hi":
-            collect_msg = (
-                "[Customer is now sharing their order details. Extract name, phone number, email, and address with pincode from what they said. "
-                f"Customer said: \"{caller_text}\". "
-                "If they gave a name, confirm it and ask for phone/email/address. "
-                "If they gave phone, confirm it and ask for remaining details. "
-                "If they gave all details, summarize and confirm the order.]"
-            )
+        order_turns = sessions[call_id].get("order_turns", 0)
+        if order_turns >= ORDER_MAX_TURNS:
+            sessions[call_id]["order_collecting"] = False
+            sessions[call_id].pop("order_details", None)
+            sessions[call_id].pop("order_turns", None)
+            print("ORDER COLLECTING — max turns reached, giving up")
         else:
-            collect_msg = (
-                "[Customer is now sharing their order details. Extract name, phone number, email, and address with pincode from what they said. "
-                f"Customer said: \"{caller_text}\". "
-                "If they gave a name, confirm it and ask for phone/email/address. "
-                "If they gave phone, confirm it and ask for remaining details. "
-                "If they gave all details, summarize and confirm the order.]"
-            )
-        print(f"ORDER COLLECTING — routing to LLM for extraction: {caller_text}")
-        add_message(call_id, "system", collect_msg)
+            existing = sessions[call_id].get("order_details", {})
+            details = _extract_order_details(caller_text, existing)
+            sessions[call_id]["order_details"] = details
+            sessions[call_id]["order_turns"] = order_turns + 1
+            print(f"ORDER COLLECTING — extracted: {details}")
+
+            if not _order_needs_more(details):
+                full_answer = _build_order_confirmation(lang, details)
+                print(f"ORDER COMPLETE — confirming: {full_answer}")
+                add_message(call_id, "assistant", full_answer)
+                sessions[call_id]["order_collecting"] = False
+                sessions[call_id].pop("order_details", None)
+                sessions[call_id].pop("order_turns", None)
+                output_file = f"audio/{call_id}.wav"
+                tts_lang = _get_tts_lang(lang, full_answer)
+                try:
+                    speak(full_answer, output_file, tts_lang)
+                except Exception as e:
+                    print("TTS ERROR:", e)
+                    return {
+                        "call_id": call_id,
+                        "caller": caller_text,
+                        "bot": full_answer,
+                        "audio": None,
+                        "segments": [],
+                        "hangup": False,
+                        "lang": lang,
+                    }
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": output_file,
+                    "segments": [(full_answer, output_file)],
+                    "hangup": False,
+                    "lang": lang,
+                }
+            else:
+                full_answer = _build_order_response(lang, details)
+                print(f"ORDER COLLECTING — asking for more: {full_answer}")
+                add_message(call_id, "assistant", full_answer)
+                output_file = f"audio/{call_id}.wav"
+                tts_lang = _get_tts_lang(lang, full_answer)
+                try:
+                    speak(full_answer, output_file, tts_lang)
+                except Exception as e:
+                    print("TTS ERROR:", e)
+                    return {
+                        "call_id": call_id,
+                        "caller": caller_text,
+                        "bot": full_answer,
+                        "audio": None,
+                        "segments": [],
+                        "hangup": False,
+                        "lang": lang,
+                    }
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": output_file,
+                    "segments": [(full_answer, output_file)],
+                    "hangup": False,
+                    "lang": lang,
+                }
 
     if _is_garbled(caller_text) and not sessions[call_id].get("awaiting_reason") and not sessions[call_id].get("order_collecting"):
         full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
