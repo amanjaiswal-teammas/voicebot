@@ -1,94 +1,84 @@
+"""
+Conversation state machine for the voicebot.
+
+Flow:
+    STT → intent classification → handler → respond
+
+Intent priority (first match wins):
+    1. silent (empty audio)
+    2. lang_switch
+    3. rejection
+    4. awaiting_reason_response  (LLM objection handler)
+    5. interest / order_intent   (pre-LLM bypass)
+    6. order_collecting          (regex extraction)
+    7. garbled                   (ask to repeat)
+    8. llm                       (streaming LLM fallback)
+"""
+
 from .stt import transcribe
 from .llm import ask_llm_stream
 from .supertonic_engine import speak, split_into_segments
 from .language import detect_language, detect_language_switch
-from .memory import (
-    get_history,
-    add_message
-)
+from .memory import get_history, add_message
 from .session_store import sessions
+from .patterns import (
+    SUPERTONIC_LANGS, KNOWN_WORDS, MALE_TO_FEMALE,
+    PITCH_HI, PITCH_EN, ORDER_COLLECT_HI, ORDER_COLLECT_EN,
+    ORDER_MAX_TURNS, ASK_REASON_HI, ASK_REASON_EN,
+    GOODBYE_HI, GOODBYE_EN, ASK_REPEAT_HI, ASK_REPEAT_EN,
+    REJECTION_RE, REJECTION_EN_RE, REJECTION_STANDALONE_RE,
+    INTEREST_RE, EXPLICIT_REQUEST_RE, ORDER_INTENT_RE,
+)
+from .order import (
+    extract_order_details, order_needs_more,
+    build_order_response, build_order_confirmation,
+)
+
 import time
 import re
-import os
-
-SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi", "na"}
-
-PITCH_HI = "Supreme Perfume Box — 4 प्रीमियम परफ्यूम्स Rs 1,599 में, 60% छूट। ऑर्डर करेंगे?"
-PITCH_EN = "Supreme Perfume Box — 4 perfumes, Rs 1,599, 60% off. Want to order?"
-
-ORDER_COLLECT_HI = "बहुत अच्छा! कृपया अपना नाम, फ़ोन नंबर, ईमेल और पता (पिनकोड सहित) बता दीजिए।"
-ORDER_COLLECT_EN = "Great! Please share your name, phone number, email, and address with pincode."
-
-ORDER_MAX_TURNS = 8
-
-ASK_REASON_HI = "ठीक है, क्या वजह है?"
-ASK_REASON_EN = "No problem. May I know why?"
-
-GOODBYE_HI = "शुक्रिया, अच्छा दिन हो!"
-GOODBYE_EN = "Thanks, have a great day!"
-
-ASK_REPEAT_HI = "माफ़ कीजिए, क्या आप दोबारा बोल सकती हैं?"
-ASK_REPEAT_EN = "Sorry, could you repeat that?"
-
-REPEAT_ASKERS = re.compile(
-    r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|sunao|suno|bolo|haan ji|hanji|"
-    r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|"
-    r"nahi|nahin|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi karna|nahi karunga|nahi karungi|"
-    r"नहीं|चाहिए|लेना|चाहते|करना|मना|बिल्कुल|एकदम|"
-    r"ना\s*चाहेंगे|ना\s*चाहूँगा|ना\s*चाहूंगी|"
-    r"order|place|confirm|cancel|email|name|address|phone|payment|pincode|"
-    r"ऑर्डर|ईमेल|नाम|पता|फ़ोन|पेमेंट|पिनकोड|"
-    r"क्यों|क्या|कैसे|कहाँ|कब|कौन|कितना|"
-    r"हाँ|ना|जी|बिल्कुल|एकदम|ठीक|अच्छा|बुरा|"
-    r"समझ|समझे|सुन|सुना|देख|बोल|बता|कर|ले|दे|जा|आ|खा|पी|"
-    r"supreme|perfume|box|perfumes|off|order|"
-    r"english|इंग्लिश|इंगलीज|इंगलेश|इंडिज|hindi|हिंदी)",
-    re.I
-)
 
 
-KNOWN_WORDS = set(
-    "हाँ ना जी बिल्कुल एकदम ठीक अच्छा बुरा समझ समझे सुन सुना देख बोल बता कर ले दे जा आ खा पी "
-    "चाहिए लेना चाहते करना मना बोलो करो करे करता करती बताओ बताइए "
-    "है हो हैं था थी होगा होगी होगे करेंगे करूँगा करूंगी दूँगा दूंगी "
-    "क्यों क्या कैसे कहाँ कब कौन कितना कौनसा "
-    "क्या है कैसे हैं क्यों नहीं कहाँ कब कौन "
-    "supreme perfume box perfumes off order email name address phone payment pincode "
-    "english hindi इंग्लिश हिंदी अंग्रेज़ी "
-    "ऑर्डर आर्डर ईमेल नाम पता फ़ोन फोन पेमेंट पिनकोड "
-    "बताइए बताईये बता दो आगे सुनिए बोलिए बताओ "
-    "nahi nahin chahiye mana lena chahte karna karunga karungi "
-    "nahi chahiye mana hai nahi lena nahi chahte nahi karna "
-    "nahi karunga nahi karungi bilkul nahi ekdum nahi "
-    "order place confirm cancel "
-    "में से को पर ने तक लिए वाले का की के "
-    "आप हम वो ये मैं तुम वह यह उस इस "
-    "तो भी ही अब फिर क्योंकि लेकिन मगर "
-    "मैंने उसने हमने तुमने आपने "
-    "बता रही हूँ बता रहा हूँ बात कर रही हूँ बात कर रहा हूँ "
-    "अंग्लिश इंगलिश इंगलीश इंगलिज "
-    "करो करे करेंगे करेए करदो कर दो कर दे करें करूँ "
-    "दो दे देंगे देंगे दूँगा दूंगी दें "
-    "चाहेंगे चाहूँगा चाहूंगी चाहते चाहता चाहती "
-    "लेंगे लूँगा लूंगी लेना ले लो लें "
-    "होंगे होऊँगा होऊंगी होगा होगी होंगी "
-    "परफ्यूम परफ्यूम्स पर्फ्यूम पर्फॉम परफॉम प्रीमियम प्रिफ़ंस "
-    "खरीदना खरीदेंगे खरीदूँगा खरीदूंगी खरीद लो खरीद लें "
-    "गईया भिया भैया काका आदे क्रेतना आओडर "
-    "कह रहे कह रही कह रहा बोल रहे बोल रही बोल रहा "
-    "रियो रेयो रहे रही रहा रहो रहें "
-    "अरे अरे यार यादा ज़्यादा ज्यादा कम कम है ही "
-    "आवाज आवाज़ आरी आ रही आ रहा आ रहे "
-    "क्या कह रही क्या कह रहे क्या बोल रही क्या बोल रहे "
-    "सकते सकता सकती सकूँगा सकूंगी "
-    "प्लीज प्लीज़ please okay sure done yes no "
-    "हाँ हां हाँजी हाँ भी ना जी हाँ "
-    "अभी फिलहाल अभी के लिए अभी नहीं "
-    "सस्ता सस्ते सस्ती महँगा महँगी महँगे".split()
-)
+# ============================================================================
+# TTS language selector
+# ============================================================================
+
+def _get_tts_lang(lang: str, text: str) -> str:
+    if lang in SUPERTONIC_LANGS:
+        return lang
+    return "en"
 
 
-def _is_garbled(text):
+# ============================================================================
+# Post-processing helpers
+# ============================================================================
+
+def _fix_hindi_gender(text: str) -> str:
+    for pattern, replacement in MALE_TO_FEMALE:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+def _fix_mid_greeting(text: str) -> str:
+    text = re.sub(r'^(नमस्ते!\s*)', '', text)
+    text = re.sub(r'^(Good morning!\s*)', '', text)
+    text = re.sub(r'^(Good evening!\s*)', '', text)
+    text = re.sub(r'^(Hello!\s*)', '', text)
+    text = re.sub(r'^(नमस्ते\s+)', '', text)
+    return text
+
+
+def _post_process(text: str, lang: str) -> str:
+    if lang == "hi":
+        text = _fix_hindi_gender(text)
+    text = _fix_mid_greeting(text)
+    return text.strip()
+
+
+# ============================================================================
+# Garbled detection
+# ============================================================================
+
+def _is_garbled(text: str) -> bool:
     if not re.search(r'[\u0900-\u097F]', text):
         return False
     words = re.findall(r'[\u0900-\u097F]+|[a-zA-Z]+', text.lower())
@@ -101,498 +91,81 @@ def _is_garbled(text):
         return True
     return False
 
-INTEREST_RE = re.compile(
-    r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
-    r"repeat|go on|continue|what is it|what's there|what about|let me know|let's hear|i'm listening| listening| go ahead|bolo|sunao|"
-    r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|samajh mein nahi|samajh nahi aaya|samajh nahi raha|samajh nahi ho raha|samajh nahi pa rahi|"
-    r"can.t hear|can.t listen|voice not|no voice|audio not|not coming|not audible|"
-    r"बताइए|बताईये|बताई\w*|बदाई\w*|बदाई\s+ये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
-    r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
-    r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|समझ\s+नहीं|"
-    r"आवाज़?\s+नहीं|आवाज़?\s+नहीं\s+आ|आवाज़?\s+नहीं\s+आरी|आवाज़?\s+नहीं\s+आ रही|"
-    r"क्या\s+कह\s+रही|क्या\s+कह\s+रहे|क्या\s+बोल\s+रही|क्या\s+बोल\s+रहे|क्या\s+बात\s+कर\s+रही|"
-    r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
-    r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ))",
-    re.I
-)
 
-ORDER_INTENT_RE = re.compile(
-    r"(order|place order|buy|purchase|खरीद|ऑर्डर|आर्डर|आओडर|ले लेंगे|ले लो|ले लूँ|ले लूं|"
-    r"कर\s*दो|कर\s*दे|कर\s*दें|करेंगे|करूँगा|करूंगी|कर\s*लो|कर\s*लें|करेए|"
-    r"confirme?|confirm|yes order|yes buy|हाँ ऑर्डर|हाँ खरीद|"
-    r"book|booking|कितना|price|कीमत|दाम|payment|पेमेंट|"
-    r"name|नाम|address|पता|pincode|पिनकोड|phone|फ़ोन|email|ईमेल|"
-    r"कृपया|plz|please|kindly|"
-    r"क्रेतना|क्रेतेंगे|पर्फॉम|पर्फ्यूम|परफॉम|परफ्यूम)",
-    re.I
-)
+# ============================================================================
+# Intent classification
+# ============================================================================
 
-MALE_TO_FEMALE = [
-    (r'हूँ', 'हूँ'),
-    (r'रहा हूँ', 'रही हूँ'),
-    (r'रहा हूं', 'रही हूँ'),
-    (r'पा रहा हूं', 'पा रही हूँ'),
-    (r'पा रहा हूँ', 'पा रही हूँ'),
-    (r'गया हूँ', 'गई हूँ'),
-    (r'गया हूं', 'गई हूँ'),
-    (r'आया हूँ', 'आई हूँ'),
-    (r'आया हूं', 'आई हूँ'),
-    (r'बता रहा हूँ', 'बता रही हूँ'),
-    (r'बता रहा हूं', 'बता रही हूँ'),
-    (r'कर रहा हूँ', 'कर रही हूँ'),
-    (r'कर रहा हूं', 'कर रही हूँ'),
-    (r'समझ रहा हूँ', 'समझ रही हूँ'),
-    (r'समझ रहा हूं', 'समझ रही हूँ'),
-    (r'सोच रहा हूँ', 'सोच रही हूँ'),
-    (r'सोच रहा हूं', 'सोच रही हूँ'),
-    (r'ले रहा हूँ', 'ले रही हूँ'),
-    (r'ले रहा हूं', 'ले रही हूँ'),
-    (r'दे रहा हूँ', 'दे रही हूँ'),
-    (r'दे रहा हूं', 'दे रही हूँ'),
-    (r'बोल रहा हूँ', 'बोल रही हूँ'),
-    (r'बोल रहा हूं', 'बोल रही हूँ'),
-    (r'सुन रहा हूँ', 'सुन रही हूँ'),
-    (r'सुन रहा हूं', 'सुन रही हूँ'),
-    (r'मान रहा हूँ', 'मान रही हूँ'),
-    (r'मान रहा हूं', 'मान रही हूँ'),
-    (r'चाह रहा हूँ', 'चाह रही हूँ'),
-    (r'चाह रहा हूं', 'चाह रही हूँ'),
-    (r'हो गया हूँ', 'हो गई हूँ'),
-    (r'हो गया हूं', 'हो गई हूँ'),
-    (r'कह रहा हूँ', 'कह रही हूँ'),
-    (r'कह रहा हूं', 'कह रही हूँ'),
-    (r'कर सकता हूँ', 'कर सकती हूँ'),
-    (r'कर सकता हूं', 'कर सकती हूँ'),
-    (r'दे सकता हूँ', 'दे सकती हूँ'),
-    (r'दे सकता हूं', 'दे सकती हूँ'),
-    (r'बता सकता हूँ', 'बता सकती हूँ'),
-    (r'बता सकता हूं', 'बता सकती हूँ'),
-    (r'करूँगा', 'करूँगी'),
-    (r'करूंगा', 'करूंगी'),
-    (r'दूँगा', 'दूँगी'),
-    (r'दूंगा', 'दूंगी'),
-    (r'बताऊँगा', 'बताऊँगी'),
-    (r'बताऊंगा', 'बताऊंगी'),
-    (r'लूँगा', 'लूँगी'),
-    (r'लूंगा', 'लूंगी'),
-    (r'चाहूँगा', 'चाहूँगी'),
-    (r'चाहूंगा', 'चाहूंगी'),
-    (r'मदद कर सकता हूँ', 'मदद कर सकती हूँ'),
-    (r'मदद कर सकता हूं', 'मदद कर सकती हूँ'),
-    (r'डालता हूँ', 'डालती हूँ'),
-    (r'डालता हूं', 'डालती हूँ'),
-    (r'बताता हूँ', 'बताती हूँ'),
-    (r'बताता हूं', 'बताती हूँ'),
-]
-
-
-def _fix_hindi_gender(text):
-    if not text:
-        return text
-    for pattern, replacement in MALE_TO_FEMALE:
-        text = re.sub(pattern, replacement, text)
-    return text
-
-
-def _fix_mid_greeting(text):
-    if not text:
-        return text
-    text = re.sub(r'^(नमस्ते!\s*)', '', text)
-    text = re.sub(r'^(Good morning!\s*)', '', text)
-    text = re.sub(r'^(Good evening!\s*)', '', text)
-    text = re.sub(r'^(Hello!\s*)', '', text)
-    text = re.sub(r'^(नमस्ते\s+)', '', text)
-    return text
-
-
-def _post_process(text, lang):
-    if lang == "hi":
-        text = _fix_hindi_gender(text)
-    text = _fix_mid_greeting(text)
-    return text.strip()
-
-
-def _get_tts_lang(lang, text):
-    if lang in SUPERTONIC_LANGS:
-        return lang
-    return "en"
-
-
-def _extract_order_details(text, existing):
-    details = dict(existing)
-    text_lower = text.lower().strip()
-
-    if not details.get("phone"):
-        m = re.search(r'(\d{10})', text_lower)
-        if not m:
-            m = re.search(r'(\d{5}\s?\d{5})', text_lower)
-        if not m:
-            m = re.search(r'(\d{7,9})', text_lower)
-        if not m:
-            word_to_digit = {'zero':'0','one':'1','two':'2','three':'3','four':'4',
-                'five':'5','six':'6','seven':'7','eight':'8','nine':'9',
-                'double one':'11','double two':'22','double three':'33',
-                'double four':'44','double five':'55','double six':'66',
-                'double seven':'77','double eight':'88','double nine':'99',
-                'duble one':'11','duble two':'22','duble three':'33',
-                'duble four':'44','duble five':'55','duble six':'66',
-                'duble seven':'77','duble eight':'88','duble nine':'99'}
-            digits_only = text_lower
-            for word, digit in sorted(word_to_digit.items(), key=lambda x: -len(x[0])):
-                digits_only = digits_only.replace(word, digit)
-            digits_only = re.sub(r'[^0-9]', '', digits_only)
-            if len(digits_only) >= 7:
-                m_digits = digits_only
-            else:
-                m_digits = None
-        else:
-            m_digits = m.group(1).replace(" ", "")
-        if m_digits:
-            details["phone"] = m_digits
-
-    if not details.get("email"):
-        m = re.search(r'[\w.+-]+@[\w.-]+\.\w+', text_lower)
-        if not m:
-            m = re.search(r'([\w.+-]+)\s+at\s+([\w.+-]+)\s*\.\s*(com|in|org)', text_lower)
-            if m:
-                details["email"] = f"{m.group(1)}@{m.group(2)}.{m.group(3)}"
-        else:
-            details["email"] = m.group(0)
-
-    if not details.get("pincode"):
-        m = re.search(r'\b(\d{6})\b', text)
-        if m:
-            details["pincode"] = m.group(1)
-
-    if not details.get("name"):
-        m = re.search(
-            r'(?:name\s+(?:is\s+)?|my\s+name\s+(?:is\s+)?|नाम\s+(?:है\s+)?|मेरा\s+नाम\s+|नाम\s+|नामं\s+)'
-            r'(.+?)(?:\s+(?:and|phone|email|address|pincode|पता|फोन|फ़ोन|ईमेल|नाम|पिनकोड)|\s*$)',
-            text, re.I
-        )
-        if m:
-            details["name"] = m.group(1).strip().rstrip('.,।')
-
-    if not details.get("address"):
-        m = re.search(
-            r'(?:address\s+(?:is\s+)?|my\s+address\s+(?:is\s+)?|पता\s+(?:है\s+)?|पता\s+)'
-            r'(.+?)(?:\s+(?:and|phone|email|name|pincode|फोन|फ़ोन|ईमेल|नाम|पिनकोड)|\s*$)',
-            text, re.I
-        )
-        if m:
-            addr = m.group(1).strip().rstrip('.,।')
-            if details.get("pincode") and details["pincode"] in addr:
-                addr = addr.replace(details["pincode"], "").strip().rstrip(',- ')
-            details["address"] = addr
-
-    if not details.get("address") and details.get("pincode"):
-        words = text.split()
-        for i, w in enumerate(words):
-            if re.match(r'\d{6}', w):
-                addr_words = words[max(0, i-4):i]
-                if addr_words:
-                    details["address"] = " ".join(addr_words)
-                break
-
-    return details
-
-
-def _order_needs_more(details):
-    return not all(details.get(k) for k in ("name", "phone", "email", "address", "pincode"))
-
-
-def _build_order_response(lang, details):
-    collected = []
-    if details.get("name"):
-        collected.append(details["name"])
-    if details.get("phone"):
-        collected.append(details["phone"])
-    if details.get("email"):
-        collected.append(details["email"])
-
-    missing = []
-    if not details.get("name"):
-        missing.append("नाम" if lang == "hi" else "name")
-    if not details.get("phone"):
-        missing.append("फ़ोन नंबर" if lang == "hi" else "phone number")
-    if not details.get("email"):
-        missing.append("ईमेल" if lang == "hi" else "email")
-    if not details.get("address") or not details.get("pincode"):
-        missing.append("पता (पिनकोड सहित)" if lang == "hi" else "address with pincode")
-
-    if not missing:
-        return None
-
-    if lang == "hi":
-        if collected:
-            return f"बहुत अच्छा! आपने {'/'.join(collected)} बताया। कृपया {' '.join(missing)} बता दीजिए।"
-        return ORDER_COLLECT_HI
-    else:
-        if collected:
-            return f"Got it! You shared {'/'.join(collected)}. Please provide {' '.join(missing)}."
-        return ORDER_COLLECT_EN
-
-
-def _build_order_confirmation(lang, details):
-    if lang == "hi":
-        return (
-            f"बहुत अच्छा! आपका ऑर्डर कन्फ़र्म हो गया है। "
-            f"नाम {details.get('name', '')}, फ़ोन {details.get('phone', '')}, "
-            f"ईमेल {details.get('email', '')}, पता {details.get('address', '')} {details.get('pincode', '')}। "
-            f"Supreme Perfume Box — Rs 1,599। शुक्रिया!"
-        )
-    else:
-        return (
-            f"Your order is confirmed! "
-            f"Name: {details.get('name', '')}, Phone: {details.get('phone', '')}, "
-            f"Email: {details.get('email', '')}, Address: {details.get('address', '')} {details.get('pincode', '')}. "
-            f"Supreme Perfume Box — Rs 1,599. Thank you!"
-        )
-
-
-def process_call(
-    call_id,
-    audio_file,
-    interrupted_text=None,
-):
-
-    print("STEP 1: STT")
-
-    print("INPUT AUDIO:", audio_file)
-
-    start_total = time.time()
-
-    if call_id not in sessions:
-        sessions[call_id] = {}
-
-    prev_lang = sessions[call_id].get("last_lang")
-
-    if audio_file is None:
-        caller_text = ""
-        lang = prev_lang or "hi"
-    else:
-        stt_start = time.time()
-
-        stt_result = transcribe(audio_file, language_hint=prev_lang)
-
-        caller_text = stt_result["text"]
-
-        whisper_lang = stt_result["language"]
-
-        switch_lang = detect_language_switch(caller_text)
-        if switch_lang:
-            lang = switch_lang
-            text_lang = lang
-            print(f"LANGUAGE SWITCH DETECTED → {lang}")
-        else:
-            text_lang = detect_language(caller_text)
-
-            if text_lang == "hi":
-                lang = "hi"
-            elif text_lang == "en":
-                lang = "en"
-            elif whisper_lang in ("hi", "en"):
-                lang = whisper_lang
-            else:
-                lang = prev_lang or "hi"
-
-        print(
-            "WHISPER LANG:", whisper_lang,
-            "| TEXT LANG:", text_lang,
-            "| FINAL LANG:", lang,
-            "| PREV LANG:", prev_lang
-        )
-
-        print(
-            "STT:",
-            int((time.time() - stt_start) * 1000),
-            "ms"
-        )
-
-
-    if not caller_text.strip():
-
-        if interrupted_text:
-            print("EMPTY BARGE-IN — skipping sorry, will re-listen")
-            return {
-                "call_id": call_id,
-                "caller": "",
-                "bot": "",
-                "audio": None,
-                "segments": [],
-                "hangup": False,
-                "lang": lang,
-            }
-
-        retries = sessions.get(call_id, {}).get("silent_retries", 0) + 1
-        sessions[call_id]["silent_retries"] = retries
-
-        if retries >= 3:
-            print(f"SILENT RETRY {retries} — HANGING UP")
-            return {
-                "call_id": call_id,
-                "caller": "",
-                "bot": "",
-                "audio": None,
-                "segments": [],
-                "hangup": True,
-                "lang": lang,
-            }
-
-        silent_lang = lang if lang in SUPERTONIC_LANGS else "en"
-        output = f"audio/{call_id}_retry.wav"
-
-        if silent_lang == "hi":
-            speak(
-                "माफ़ कीजिए, मैं समझ नहीं पाई। क्या आप दोबारा बोल सकती हैं?",
-                output,
-                "hi",
-            )
-        else:
-            speak(
-                "Sorry, I didn't catch that. Could you please repeat?",
-                output,
-                "en",
-            )
-
-        return {
-            "call_id": call_id,
-            "caller": "",
-            "bot": "Sorry, I didn't catch that.",
-            "audio": output,
-            "segments": [],
-            "lang": silent_lang,
-        }
-
-    print("CALLER:", caller_text)
-
-    sessions[call_id]["silent_retries"] = 0
-    sessions[call_id]["last_lang"] = lang
-
-    text_lower = caller_text.lower().strip()
-
-    is_lang_switch = detect_language_switch(caller_text) is not None
-
-    is_rejection = False
-    is_interest = False
-    if not is_lang_switch:
-        is_rejection = bool(re.search(
-            r"(nahi|nahin|na chahiye|na chahte|na karunga|nahi chahiye|mana hai|nahi lena|nahi chahte|nahi mangta|nahi karna|nahi karunga|nahi karungi|matlab nahi|bilkul nahi|ekdum nahi|"
-            r"नहीं[\s,।.!]+चाहिए|मना[\s,।.!]+है|नहीं[\s,।.!]+लेना|नहीं[\s,।.!]+चाहते|नहीं[\s,।.!]+मंगता|नहीं[\s,।.!]+करना|"
-            r"ना[\s,।.!]+चाहेंगे|ना[\s,।.!]+चाहूँगा|ना[\s,।.!]+चाहूंगी|ना[\s,।.!]+करेंगे|ना[\s,।.!]+करूँगा|ना[\s,।.!]+करूंगी|ना[\s,।.!]+लेंगे|ना[\s,।.!]+लूँगा|ना[\s,।.!]+लूंगी|"
-            r"बिल्कुल[\s,।.!]+नहीं|एकदम[\s,।.!]+नहीं|नहीं[\s,।.!]+सुनना|नहीं[\s,।.!]+करूँ|नहीं[\s,।.!]+करूंगा|नहीं[\s,।.!]+करूंगी|"
-                r"नहीं[\s,।.!]+चाहे|नहीं[\s,।.!]+चाहत|"
-                r"जी[\s,।.!]+नहीं|अब[\s,।.!]+नहीं|नहीं[\s,।.!]+जी\b|"
-                r"नहीं[\s,।.!]+बोल|नहीं[\s,।.!]+चाहिए\w*|नहीं[\s,।.!]+लगता|"
-                r"नहीं[\s,।.!]+गरेंगे|नहीं[\s,।.!]+गरूँगा|नहीं[\s,।.!]+गरूंगी|"
-                r"नहीं[\s,।.!]+जी|नहीं\s*[।,.]?\s*$|"
-                r"सस्त[ाेी]\w*\s+मिल|सस्त[ाेी]\w*\s+है|इससे\s+सस्त|उससे\s+सस्त|कहीं\s+और\s+सस्त|"
-                r"फोन\s+रख\s+द[ेई]|फोन\s+रक\s+द[ेई]|फ़ोन\s+रख\s+द[ेई]|"
-                r"बात\s+नहीं\s+करन[ाेी]|बात\s+नहीं\s+करूंग[ाी]|बात\s+नहीं\s+करेंग[ाेी])",
-                text_lower
-            )) or bool(re.search(
-                r"\b(no|skip|not interested|don'?t\s*want)\b",
-                text_lower
-            ))
-        if not is_rejection and not sessions[call_id].get("awaiting_reason"):
-            if re.search(r"(?<!\S)नहीं(?!\S)", caller_text):
-                is_rejection = True
-        if not is_rejection and len(caller_text.split()) <= 12:
-            is_interest = bool(INTEREST_RE.search(caller_text))
-
-    if is_rejection:
-        sessions[call_id]["no_count"] = sessions[call_id].get("no_count", 0) + 1
-        sessions[call_id]["awaiting_reason"] = False
-        sessions[call_id]["order_collecting"] = False
-        sessions[call_id].pop("order_details", None)
-        sessions[call_id].pop("order_turns", None)
-        no_count = sessions[call_id]["no_count"]
-        print(f"REJECTION #{no_count}: {caller_text}")
-        if no_count >= 2:
-            full_answer = GOODBYE_HI if lang == "hi" else GOODBYE_EN
-            hangup = True
-            print(f"FORCED GOODBYE (rejection #{no_count}): {full_answer}")
-            add_message(call_id, "assistant", full_answer)
-            sessions[call_id]["no_count"] = 0
-            sessions[call_id]["awaiting_reason"] = False
-            output_file = f"audio/{call_id}.wav"
-            tts_lang = _get_tts_lang(lang, full_answer)
-            try:
-                speak(full_answer, output_file, tts_lang)
-            except Exception as e:
-                print("TTS ERROR:", e)
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": None,
-                    "segments": [],
-                    "hangup": True,
-                    "lang": lang,
-                }
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": output_file,
-                "segments": [(full_answer, output_file)],
-                "hangup": True,
-                "lang": lang,
-            }
-        else:
-            full_answer = ASK_REASON_HI if lang == "hi" else ASK_REASON_EN
-            print(f"FORCED ASK REASON (rejection #{no_count}): {full_answer}")
-            add_message(call_id, "assistant", full_answer)
-            sessions[call_id]["awaiting_reason"] = True
-            output_file = f"audio/{call_id}.wav"
-            tts_lang = _get_tts_lang(lang, full_answer)
-            try:
-                speak(full_answer, output_file, tts_lang)
-            except Exception as e:
-                print("TTS ERROR:", e)
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": None,
-                    "segments": [],
-                    "hangup": False,
-                    "lang": lang,
-                }
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": output_file,
-                "segments": [(full_answer, output_file)],
-                "hangup": False,
-                "lang": lang,
-            }
-    else:
-        sessions[call_id]["no_count"] = 0
-
-    if interrupted_text:
-        if not is_lang_switch:
-            context = (
-                f"[Customer interrupted. "
-                f"Customer said: \"{caller_text}\". "
-                f"Respond to what the customer said.]"
-            )
-            print("INTERRUPTED CONTEXT:", context)
-            add_message(call_id, "system", context)
-
-    add_message(
-        call_id,
-        "user",
-        caller_text
+def _pitch_given(session: dict) -> bool:
+    return any(
+        PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
+        for m in session.get("messages", [])
+        if m.get("role") == "assistant"
     )
 
-    if is_lang_switch:
-        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
-        print(f"LANG SWITCH → {lang} — BYPASSING LLM, PITCH: {full_answer}")
-        add_message(call_id, "assistant", full_answer)
-        output_file = f"audio/{call_id}.wav"
-        tts_lang = _get_tts_lang(lang, full_answer)
+
+def _classify_intent(caller_text: str, session: dict, lang: str):
+    """Return (intent_name, extras_dict) tuple."""
+    text_lower = caller_text.lower().strip()
+
+    # Language switch?
+    if detect_language_switch(caller_text):
+        return ("lang_switch", {})
+
+    # Rejection?
+    is_rejection = bool(REJECTION_RE.search(text_lower)) or bool(
+        REJECTION_EN_RE.search(text_lower)
+    )
+    if not is_rejection and not session.get("awaiting_reason"):
+        if REJECTION_STANDALONE_RE.search(caller_text):
+            is_rejection = True
+    if is_rejection:
+        return ("rejection", {})
+
+    # Already awaiting a reason → let LLM handle objection
+    if session.get("awaiting_reason"):
+        return ("awaiting_reason_response", {})
+
+    # Interest (short utterance only)?
+    if len(caller_text.split()) <= 12 and INTEREST_RE.search(caller_text):
+        explicit = bool(EXPLICIT_REQUEST_RE.search(caller_text))
+        return ("interest", {"explicit_request": explicit})
+
+    # Order intent (but not already collecting)?
+    if not session.get("order_collecting") and ORDER_INTENT_RE.search(caller_text):
+        return ("order_intent", {})
+
+    # Currently collecting order details?
+    if session.get("order_collecting"):
+        return ("order_collecting", {})
+
+    # Garbled?
+    if _is_garbled(caller_text):
+        return ("garbled", {})
+
+    return ("llm", {})
+
+
+# ============================================================================
+# Single TTS + return helper — kills the 8× boilerplate
+# ============================================================================
+
+def _respond(
+    call_id: str,
+    caller_text: str,
+    full_answer: str,
+    lang: str,
+    hangup: bool = False,
+    segments=None,
+):
+    """Synthesize *full_answer* to audio, build standard return dict."""
+    if segments is None:
+        segments = []
+
+    output_file = f"audio/{call_id}.wav"
+    tts_lang = _get_tts_lang(lang, full_answer)
+
+    if not segments:
         try:
             speak(full_answer, output_file, tts_lang)
         except Exception as e:
@@ -603,272 +176,160 @@ def process_call(
                 "bot": full_answer,
                 "audio": None,
                 "segments": [],
-                "hangup": False,
+                "hangup": hangup,
                 "lang": lang,
             }
-        return {
-            "call_id": call_id,
-            "caller": caller_text,
-            "bot": full_answer,
-            "audio": output_file,
-            "segments": [(full_answer, output_file)],
-            "hangup": False,
-            "lang": lang,
-        }
+        segments = [(full_answer, output_file)]
 
-    _was_awaiting_reason = sessions[call_id].get("awaiting_reason", False)
-    if _was_awaiting_reason and not is_rejection:
-        sessions[call_id]["awaiting_reason"] = False
-        if lang == "hi":
-            reason_msg = (
-                "[Customer just gave a reason for refusing. DO NOT ask 'क्या वजह है?' again. "
-                f"Customer said: \"{caller_text}\". "
-                "Address their concern directly. If cheaper: say 'हमारे पास 60% छूट है, यह बहुत अच्छा ऑफ़र है।' "
-                "Then ask once more if they want to order. If still no, say goodbye.]"
-            )
-        else:
-            reason_msg = (
-                "[Customer just gave a reason for refusing. DO NOT ask 'May I know why?' again. "
-                f"Customer said: \"{caller_text}\". "
-                "Address their concern directly. If cheaper: say 'We have 60% off, that's a great deal!' "
-                "Then ask once more if they want to order. If still no, say goodbye.]"
-            )
-        print("REASON GIVEN — injecting objection handler")
-        add_message(call_id, "system", reason_msg)
+    return {
+        "call_id": call_id,
+        "caller": caller_text,
+        "bot": full_answer,
+        "audio": output_file,
+        "segments": segments,
+        "hangup": hangup,
+        "lang": lang,
+    }
 
-    if is_interest and not _was_awaiting_reason and not sessions[call_id].get("order_collecting"):
-        explicit_request = bool(re.search(
-            r"(bataiye|batai[eē]|aage bata|bata de|bata do|sunao|suno|bolo|tell me|go on|continue|repeat|"
-            r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|"
-            r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|सुनिए|बोलिए|बताओ|"
-            r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
-            r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप)",
-            caller_text, re.I
-        ))
-        if explicit_request:
-            full_answer = PITCH_HI if lang == "hi" else PITCH_EN
-        else:
-            pitch_given = any(
-                PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
-                for m in sessions[call_id].get("messages", [])
-                if m.get("role") == "assistant"
-            )
-            if pitch_given:
-                full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
-            else:
-                full_answer = PITCH_HI if lang == "hi" else PITCH_EN
-        if full_answer:
-            is_order_collect = full_answer in (ORDER_COLLECT_HI, ORDER_COLLECT_EN)
-            action = "ORDER COLLECT" if is_order_collect else "PITCH"
-            print(f"INTEREST DETECTED — BYPASSING LLM, {action}: {full_answer}")
-            add_message(call_id, "assistant", full_answer)
-            if is_order_collect:
-                sessions[call_id]["order_collecting"] = True
-            output_file = f"audio/{call_id}.wav"
-            tts_lang = _get_tts_lang(lang, full_answer)
-            try:
-                speak(full_answer, output_file, tts_lang)
-            except Exception as e:
-                print("TTS ERROR:", e)
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": None,
-                    "segments": [],
-                    "hangup": False,
-                    "lang": lang,
-                }
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": output_file,
-                "segments": [(full_answer, output_file)],
-                "hangup": False,
-                "lang": lang,
-            }
 
-    is_order_intent = bool(ORDER_INTENT_RE.search(caller_text))
-    if is_order_intent and not sessions[call_id].get("order_collecting"):
-        pitch_given = any(
-            PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
-            for m in sessions[call_id].get("messages", [])
-            if m.get("role") == "assistant"
+# ============================================================================
+# Intent handlers
+# ============================================================================
+
+def _handle_rejection(call_id, caller_text, session, lang):
+    session["no_count"] = session.get("no_count", 0) + 1
+    session["awaiting_reason"] = False
+    session["order_collecting"] = False
+    session.pop("order_details", None)
+    session.pop("order_turns", None)
+    no_count = session["no_count"]
+
+    print(f"REJECTION #{no_count}: {caller_text}")
+
+    if no_count >= 2:
+        full_answer = GOODBYE_HI if lang == "hi" else GOODBYE_EN
+        print(f"FORCED GOODBYE (rejection #{no_count}): {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+        session["no_count"] = 0
+        session["awaiting_reason"] = False
+        return _respond(call_id, caller_text, full_answer, lang, hangup=True)
+
+    full_answer = ASK_REASON_HI if lang == "hi" else ASK_REASON_EN
+    print(f"FORCED ASK REASON (rejection #{no_count}): {full_answer}")
+    add_message(call_id, "assistant", full_answer)
+    session["awaiting_reason"] = True
+    return _respond(call_id, caller_text, full_answer, lang)
+
+
+def _handle_lang_switch(call_id, caller_text, session, lang):
+    full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+    print(f"LANG SWITCH → {lang} — BYPASSING LLM, PITCH: {full_answer}")
+    add_message(call_id, "assistant", full_answer)
+    return _respond(call_id, caller_text, full_answer, lang)
+
+
+def _handle_awaiting_reason(call_id, caller_text, session, lang):
+    session["awaiting_reason"] = False
+    if lang == "hi":
+        reason_msg = (
+            "[Customer just gave a reason for refusing. DO NOT ask 'क्या वजह है?' again. "
+            f'Customer said: "{caller_text}". '
+            "Address their concern directly. If cheaper: say 'हमारे पास 60% छूट है, यह बहुत अच्छा ऑफ़र है।' "
+            "Then ask once more if they want to order. If still no, say goodbye.]"
         )
-        if pitch_given:
-            full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
-            print(f"ORDER INTENT — BYPASSING LLM, COLLECTING DETAILS: {full_answer}")
-            add_message(call_id, "assistant", full_answer)
-            sessions[call_id]["order_collecting"] = True
-            output_file = f"audio/{call_id}.wav"
-            tts_lang = _get_tts_lang(lang, full_answer)
-            try:
-                speak(full_answer, output_file, tts_lang)
-            except Exception as e:
-                print("TTS ERROR:", e)
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": None,
-                    "segments": [],
-                    "hangup": False,
-                    "lang": lang,
-                }
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": output_file,
-                "segments": [(full_answer, output_file)],
-                "hangup": False,
-                "lang": lang,
-            }
-        else:
-            full_answer = PITCH_HI if lang == "hi" else PITCH_EN
-            print(f"ORDER INTENT (no pitch yet) — PITCHING: {full_answer}")
-            add_message(call_id, "assistant", full_answer)
-            output_file = f"audio/{call_id}.wav"
-            tts_lang = _get_tts_lang(lang, full_answer)
-            try:
-                speak(full_answer, output_file, tts_lang)
-            except Exception as e:
-                print("TTS ERROR:", e)
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": None,
-                    "segments": [],
-                    "hangup": False,
-                    "lang": lang,
-                }
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": output_file,
-                "segments": [(full_answer, output_file)],
-                "hangup": False,
-                "lang": lang,
-            }
+    else:
+        reason_msg = (
+            "[Customer just gave a reason for refusing. DO NOT ask 'May I know why?' again. "
+            f'Customer said: "{caller_text}". '
+            "Address their concern directly. If cheaper: say 'We have 60% off, that's a great deal!' "
+            "Then ask once more if they want to order. If still no, say goodbye.]"
+        )
+    print("REASON GIVEN — injecting objection handler")
+    add_message(call_id, "system", reason_msg)
+    # Fall through to LLM — return None to signal "continue to LLM"
+    return None
 
-    if sessions[call_id].get("order_collecting") and not is_rejection:
-        order_turns = sessions[call_id].get("order_turns", 0)
-        if order_turns >= ORDER_MAX_TURNS:
-            sessions[call_id]["order_collecting"] = False
-            sessions[call_id].pop("order_details", None)
-            sessions[call_id].pop("order_turns", None)
-            print("ORDER COLLECTING — max turns reached, giving up")
-        else:
-            existing = sessions[call_id].get("order_details", {})
-            details = _extract_order_details(caller_text, existing)
-            sessions[call_id]["order_details"] = details
-            sessions[call_id]["order_turns"] = order_turns + 1
-            print(f"ORDER COLLECTING — extracted: {details}")
 
-            if not _order_needs_more(details):
-                full_answer = _build_order_confirmation(lang, details)
-                print(f"ORDER COMPLETE — confirming: {full_answer}")
-                add_message(call_id, "assistant", full_answer)
-                sessions[call_id]["order_collecting"] = False
-                sessions[call_id].pop("order_details", None)
-                sessions[call_id].pop("order_turns", None)
-                output_file = f"audio/{call_id}.wav"
-                tts_lang = _get_tts_lang(lang, full_answer)
-                try:
-                    speak(full_answer, output_file, tts_lang)
-                except Exception as e:
-                    print("TTS ERROR:", e)
-                    return {
-                        "call_id": call_id,
-                        "caller": caller_text,
-                        "bot": full_answer,
-                        "audio": None,
-                        "segments": [],
-                        "hangup": False,
-                        "lang": lang,
-                    }
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": output_file,
-                    "segments": [(full_answer, output_file)],
-                    "hangup": False,
-                    "lang": lang,
-                }
-            else:
-                full_answer = _build_order_response(lang, details)
-                print(f"ORDER COLLECTING — asking for more: {full_answer}")
-                add_message(call_id, "assistant", full_answer)
-                output_file = f"audio/{call_id}.wav"
-                tts_lang = _get_tts_lang(lang, full_answer)
-                try:
-                    speak(full_answer, output_file, tts_lang)
-                except Exception as e:
-                    print("TTS ERROR:", e)
-                    return {
-                        "call_id": call_id,
-                        "caller": caller_text,
-                        "bot": full_answer,
-                        "audio": None,
-                        "segments": [],
-                        "hangup": False,
-                        "lang": lang,
-                    }
-                return {
-                    "call_id": call_id,
-                    "caller": caller_text,
-                    "bot": full_answer,
-                    "audio": output_file,
-                    "segments": [(full_answer, output_file)],
-                    "hangup": False,
-                    "lang": lang,
-                }
+def _handle_interest(call_id, caller_text, session, lang, explicit_request):
+    if explicit_request:
+        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+    elif _pitch_given(session):
+        full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
+    else:
+        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
 
-    if _is_garbled(caller_text) and not sessions[call_id].get("awaiting_reason") and not sessions[call_id].get("order_collecting"):
-        full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
-        print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
+    is_order_collect = full_answer in (ORDER_COLLECT_HI, ORDER_COLLECT_EN)
+    action = "ORDER COLLECT" if is_order_collect else "PITCH"
+    print(f"INTEREST DETECTED — BYPASSING LLM, {action}: {full_answer}")
+    add_message(call_id, "assistant", full_answer)
+    if is_order_collect:
+        session["order_collecting"] = True
+    return _respond(call_id, caller_text, full_answer, lang)
+
+
+def _handle_order_intent(call_id, caller_text, session, lang):
+    if _pitch_given(session):
+        full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
+        print(f"ORDER INTENT — BYPASSING LLM, COLLECTING DETAILS: {full_answer}")
         add_message(call_id, "assistant", full_answer)
-        output_file = f"audio/{call_id}.wav"
-        tts_lang = _get_tts_lang(lang, full_answer)
-        try:
-            speak(full_answer, output_file, tts_lang)
-        except Exception as e:
-            print("TTS ERROR:", e)
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": None,
-                "segments": [],
-                "hangup": False,
-                "lang": lang,
-            }
-        return {
-            "call_id": call_id,
-            "caller": caller_text,
-            "bot": full_answer,
-            "audio": output_file,
-            "segments": [(full_answer, output_file)],
-            "hangup": False,
-            "lang": lang,
-        }
+        session["order_collecting"] = True
+    else:
+        full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+        print(f"ORDER INTENT (no pitch yet) — PITCHING: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+    return _respond(call_id, caller_text, full_answer, lang)
 
+
+def _handle_order_collecting(call_id, caller_text, session, lang):
+    order_turns = session.get("order_turns", 0)
+    if order_turns >= ORDER_MAX_TURNS:
+        session["order_collecting"] = False
+        session.pop("order_details", None)
+        session.pop("order_turns", None)
+        print("ORDER COLLECTING — max turns reached, giving up")
+        return None  # fall through to LLM
+
+    existing = session.get("order_details", {})
+    details = extract_order_details(caller_text, existing)
+    session["order_details"] = details
+    session["order_turns"] = order_turns + 1
+    print(f"ORDER COLLECTING — extracted: {details}")
+
+    if not order_needs_more(details):
+        full_answer = build_order_confirmation(lang, details)
+        print(f"ORDER COMPLETE — confirming: {full_answer}")
+        add_message(call_id, "assistant", full_answer)
+        session["order_collecting"] = False
+        session.pop("order_details", None)
+        session.pop("order_turns", None)
+        return _respond(call_id, caller_text, full_answer, lang)
+
+    full_answer = build_order_response(lang, details)
+    print(f"ORDER COLLECTING — asking for more: {full_answer}")
+    add_message(call_id, "assistant", full_answer)
+    return _respond(call_id, caller_text, full_answer, lang)
+
+
+def _handle_garbled(call_id, caller_text, session, lang):
+    full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
+    print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
+    add_message(call_id, "assistant", full_answer)
+    return _respond(call_id, caller_text, full_answer, lang)
+
+
+# ============================================================================
+# LLM streaming handler
+# ============================================================================
+
+def _handle_llm(call_id, caller_text, session, lang):
     print("STEP 2: LLM (STREAMING)")
 
-    history = get_history(call_id)
-
-    history = history[-6:]
+    history = get_history(call_id)[-6:]
 
     llm_start = time.time()
-
     full_answer = ""
     hangup = False
     tts_lang = _get_tts_lang(lang, "")
-
     segments = []
     pending_text = ""
 
@@ -906,82 +367,227 @@ def process_call(
         except Exception as e:
             print(f"TTS FINAL ERROR: {e}")
 
-    add_message(
-        call_id,
-        "assistant",
-        full_answer
-    )
-
+    add_message(call_id, "assistant", full_answer)
     print("BOT:", full_answer)
     print(f"LLM_HANGUP={hangup}")
 
     if not hangup:
-        goodbye_words_en = [
-            "have a great day", "have a nice day", "have a good day",
-            "thank you for your time", "bye", "goodbye",
-        ]
-        goodbye_words_hi = [
-            "aapka din ho", "acha din ho", "din ho achha",
-            "aapka time ke liye thank", "thank you for your time",
-            "अच्छा दिन हो", "दिन अच्छा हो", "आपका दिन हो",
-            "शुक्रिया, अच्छा दिन", "शुक्रिया,अच्छा दिन", "अलविदा",
-        ]
-        all_goodbye = goodbye_words_en + goodbye_words_hi
-        if any(w in caller_text.lower() for w in all_goodbye):
-            hangup = True
-            print("HANGUP AUTO-DETECTED (customer said goodbye phrase)")
-        elif any(w in full_answer.lower() for w in all_goodbye):
-            hangup = True
-            print("HANGUP AUTO-DETECTED (bot said goodbye phrase)")
-
-    print("STEP 3: TTS")
+        hangup = _detect_goodbye(caller_text, full_answer)
 
     output_file = f"audio/{call_id}.wav"
 
     if segments:
-        final_segments = segments
-    else:
-        tts_lang = _get_tts_lang(lang, full_answer)
-        tts_start = time.time()
-        try:
-            speak(
-                full_answer,
-                output_file,
-                tts_lang
-            )
-        except Exception as e:
-            print("TTS ERROR:", e)
-            return {
-                "call_id": call_id,
-                "caller": caller_text,
-                "bot": full_answer,
-                "audio": None,
-                "segments": [],
-                "hangup": hangup,
-                "lang": lang,
-            }
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": output_file,
+            "segments": segments,
+            "hangup": hangup,
+            "lang": lang,
+        }
 
-        print(
-            "TTS:",
-            int((time.time() - tts_start) * 1000),
-            "ms"
-        )
-        final_segments = [(full_answer, output_file)]
+    tts_lang = _get_tts_lang(lang, full_answer)
+    tts_start = time.time()
+    try:
+        speak(full_answer, output_file, tts_lang)
+    except Exception as e:
+        print("TTS ERROR:", e)
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": None,
+            "segments": [],
+            "hangup": hangup,
+            "lang": lang,
+        }
+    print("TTS:", int((time.time() - tts_start) * 1000), "ms")
 
-    print(
-        "TOTAL:",
-        int((time.time() - start_total) * 1000),
-        "ms"
-    )
-
-    result = {
+    return {
         "call_id": call_id,
         "caller": caller_text,
         "bot": full_answer,
         "audio": output_file,
-        "segments": final_segments,
+        "segments": [(full_answer, output_file)],
         "hangup": hangup,
         "lang": lang,
     }
-    print(f"PROCESS_CALL RETURN: hangup={hangup} lang={lang} bot_len={len(full_answer)} segments={len(final_segments)}")
-    return result
+
+
+_GOODBYE_WORDS_EN = [
+    "have a great day", "have a nice day", "have a good day",
+    "thank you for your time", "bye", "goodbye",
+]
+_GOODBYE_WORDS_HI = [
+    "aapka din ho", "acha din ho", "din ho achha",
+    "aapka time ke liye thank", "thank you for your time",
+    "अच्छा दिन हो", "दिन अच्छा हो", "आपका दिन हो",
+    "शुक्रिया, अच्छा दिन", "शुक्रिया,अच्छा दिन", "अलविदा",
+]
+_ALL_GOODBYE = _GOODBYE_WORDS_EN + _GOODBYE_WORDS_HI
+
+
+def _detect_goodbye(caller_text: str, bot_answer: str) -> bool:
+    if any(w in caller_text.lower() for w in _ALL_GOODBYE):
+        print("HANGUP AUTO-DETECTED (customer said goodbye phrase)")
+        return True
+    if any(w in bot_answer.lower() for w in _ALL_GOODBYE):
+        print("HANGUP AUTO-DETECTED (bot said goodbye phrase)")
+        return True
+    return False
+
+
+# ============================================================================
+# Main entry point
+# ============================================================================
+
+def process_call(call_id: str, audio_file, interrupted_text=None):
+
+    print("STEP 1: STT")
+    print("INPUT AUDIO:", audio_file)
+
+    start_total = time.time()
+
+    if call_id not in sessions:
+        sessions[call_id] = {}
+
+    session = sessions[call_id]
+    prev_lang = session.get("last_lang")
+
+    # ------------------------------------------------------------------
+    # STT + language detection
+    # ------------------------------------------------------------------
+    if audio_file is None:
+        caller_text = ""
+        lang = prev_lang or "hi"
+    else:
+        stt_start = time.time()
+
+        stt_result = transcribe(audio_file, language_hint=prev_lang)
+        caller_text = stt_result["text"]
+        whisper_lang = stt_result["language"]
+
+        switch_lang = detect_language_switch(caller_text)
+        if switch_lang:
+            lang = switch_lang
+            text_lang = lang
+            print(f"LANGUAGE SWITCH DETECTED → {lang}")
+        else:
+            text_lang = detect_language(caller_text)
+            if text_lang == "hi":
+                lang = "hi"
+            elif text_lang == "en":
+                lang = "en"
+            elif whisper_lang in ("hi", "en"):
+                lang = whisper_lang
+            else:
+                lang = prev_lang or "hi"
+
+        print(
+            "WHISPER LANG:", whisper_lang,
+            "| TEXT LANG:", text_lang,
+            "| FINAL LANG:", lang,
+            "| PREV LANG:", prev_lang,
+        )
+        print("STT:", int((time.time() - stt_start) * 1000), "ms")
+
+    # ------------------------------------------------------------------
+    # Silent / empty audio handling
+    # ------------------------------------------------------------------
+    if not caller_text.strip():
+        return _handle_silent(call_id, interrupted_text, lang)
+
+    print("CALLER:", caller_text)
+    session["silent_retries"] = 0
+    session["last_lang"] = lang
+
+    # ------------------------------------------------------------------
+    # Barge-in context injection
+    # ------------------------------------------------------------------
+    if interrupted_text and not detect_language_switch(caller_text):
+        context = (
+            f'[Customer interrupted. Customer said: "{caller_text}". '
+            f"Respond to what the customer said.]"
+        )
+        print("INTERRUPTED CONTEXT:", context)
+        add_message(call_id, "system", context)
+
+    add_message(call_id, "user", caller_text)
+
+    # ------------------------------------------------------------------
+    # Classify intent
+    # ------------------------------------------------------------------
+    intent, extras = _classify_intent(caller_text, session, lang)
+
+    # ------------------------------------------------------------------
+    # Dispatch to handler
+    # ------------------------------------------------------------------
+    if intent == "rejection":
+        return _handle_rejection(call_id, caller_text, session, lang)
+
+    session["no_count"] = 0  # clear on non-rejection
+
+    if intent == "lang_switch":
+        return _handle_lang_switch(call_id, caller_text, session, lang)
+
+    if intent == "awaiting_reason_response":
+        result = _handle_awaiting_reason(call_id, caller_text, session, lang)
+        if result is not None:
+            return result
+        # Falls through to LLM below
+
+    if intent == "interest":
+        return _handle_interest(
+            call_id, caller_text, session, lang, extras["explicit_request"]
+        )
+
+    if intent == "order_intent":
+        return _handle_order_intent(call_id, caller_text, session, lang)
+
+    if intent == "order_collecting":
+        result = _handle_order_collecting(call_id, caller_text, session, lang)
+        if result is not None:
+            return result
+        # max turns reached → fall through to LLM
+
+    if intent == "garbled":
+        return _handle_garbled(call_id, caller_text, session, lang)
+
+    # ------------------------------------------------------------------
+    # LLM fallback
+    # ------------------------------------------------------------------
+    return _handle_llm(call_id, caller_text, session, lang)
+
+
+def _handle_silent(call_id, interrupted_text, lang):
+    if interrupted_text:
+        print("EMPTY BARGE-IN — skipping sorry, will re-listen")
+        return {
+            "call_id": call_id, "caller": "", "bot": "",
+            "audio": None, "segments": [], "hangup": False, "lang": lang,
+        }
+
+    retries = sessions.get(call_id, {}).get("silent_retries", 0) + 1
+    sessions[call_id]["silent_retries"] = retries
+
+    if retries >= 3:
+        print(f"SILENT RETRY {retries} — HANGING UP")
+        return {
+            "call_id": call_id, "caller": "", "bot": "",
+            "audio": None, "segments": [], "hangup": True, "lang": lang,
+        }
+
+    silent_lang = lang if lang in SUPERTONIC_LANGS else "en"
+    if silent_lang == "hi":
+        msg = "माफ़ कीजिए, मैं समझ नहीं पाई। क्या आप दोबारा बोल सकती हैं?"
+    else:
+        msg = "Sorry, I didn't catch that. Could you please repeat?"
+
+    output = f"audio/{call_id}_retry.wav"
+    speak(msg, output, "hi" if silent_lang == "hi" else "en")
+
+    return {
+        "call_id": call_id, "caller": "", "bot": "Sorry, I didn't catch that.",
+        "audio": output, "segments": [], "lang": silent_lang,
+    }
