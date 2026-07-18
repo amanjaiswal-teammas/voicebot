@@ -110,7 +110,10 @@ SWITCH_TO_EN = re.compile(
     r"इंडिज़\w*|इंडिज\w*|इंडीज\w*|"
     r"इंगलिश\w*\s*(में|म)|इंगलीज\w*\s*(में|म)|"
     r"व्लिज\w*\s*(बदा|बता|बोल|बताइए|बताओ|सुनाओ)|"
-    r"ड्लिश\w*\s*(बदा|बता|बोल|बताइए|बताओ|सुनाओ))",
+    r"ड्लिश\w*\s*(बदा|बता|बोल|बताइए|बताओ|सुनाओ)|"
+    r"अंग्लिश\w*|अंग्लिश\s*(में|म)|"
+    r"अंगलीश\w*|अंगलीज\w*|"
+    r"eng(?:lish)?\s*(mein|me\b))",
     re.IGNORECASE,
 )
 
@@ -120,7 +123,7 @@ SWITCH_TO_HI = re.compile(
 )
 
 LANGUAGE_QUESTION = re.compile(
-    r"(wer[e]?nt you|were not you|were you|are you|do you|can you|shouldn.t you|won.t you|isn.t it)",
+    r"(wer[e]?nt you|were not you|were you|are you|shouldn.t you|won.t you|isn.t it)",
     re.IGNORECASE,
 )
 
