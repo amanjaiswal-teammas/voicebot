@@ -82,7 +82,7 @@ INTEREST_RE = re.compile(
     r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
     r"बताइए|बताईये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
     r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
-    r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ)",
+    r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ))",
     re.I
 )
 
