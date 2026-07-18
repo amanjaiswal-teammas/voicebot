@@ -75,6 +75,9 @@ KNOWN_WORDS = set(
     "गईया भिया भैया काका आदे क्रेतना आओडर "
     "कह रहे कह रही कह रहा बोल रहे बोल रही बोल रहा "
     "रियो रेयो रहे रही रहा रहो रहें "
+    "अरे अरे यार यादा ज़्यादा ज्यादा कम कम है ही "
+    "आवाज आवाज़ आरी आ रही आ रहा आ रहे "
+    "क्या कह रही क्या कह रहे क्या बोल रही क्या बोल रहे "
     "सकते सकता सकती सकूँगा सकूंगी "
     "प्लीज प्लीज़ please okay sure done yes no "
     "हाँ हां हाँजी हाँ भी ना जी हाँ "
@@ -100,9 +103,12 @@ INTEREST_RE = re.compile(
     r"(bataiye|batai[eē]|aage bata|aage batai|ha[nm]\s*(ji|bhi)?|sure|yes|tell me|ok bata|acha bata|sunao|suno|bolo|haan ji|hanji|bata de|bata do|kya hai|kya baat|kaise|kya matlab|thik hai bata|acha|samjhe nahi|samajh nahi aaya|nahi bataya|nahi batara|pura nahi bata|"
     r"repeat|go on|continue|what is it|what's there|what about|let me know|let's hear|i'm listening| listening| go ahead|bolo|sunao|"
     r"don.t understand|can.t understand|not clear|not getting|confused|samajh nahi|samajh mein nahi|samajh nahi aaya|samajh nahi raha|samajh nahi ho raha|samajh nahi pa rahi|"
+    r"can.t hear|can.t listen|voice not|no voice|audio not|not coming|not audible|"
     r"बताइए|बताईये|बताई\w*|बदाई\w*|बदाई\s+ये|बता दो|बता दीजिए|आगे बताइए|हाँ\s*(जी|भी)?|सुनिए|बोलिए|बताओ|समझे\s+नहीं|समझ\s+नहीं\s+आया|क्या\s+है|क्या\s+बात|कैसे|क्या\s+मतलब|अच्छा\s+बता|ठीक\s+है\s+बता|"
     r"फिर\s+से\s+बताइए|फिर\s+से\s+बताओ|दोबारा\s+बताइए|दोबारा\s+बताओ|"
     r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|"
+    r"आवाज़?\s+नहीं|आवाज़?\s+नहीं\s+आ|आवाज़?\s+नहीं\s+आरी|आवाज़?\s+नहीं\s+आ रही|"
+    r"क्या\s+कह\s+रही|क्या\s+कह\s+रहे|क्या\s+बोल\s+रही|क्या\s+बोल\s+रहे|क्या\s+बात\s+कर\s+रही|"
     r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
     r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ))",
     re.I
