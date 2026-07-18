@@ -16,6 +16,9 @@ SUPERTONIC_LANGS = {"en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", 
 PITCH_HI = "Supreme Perfume Box — 4 प्रीमियम परफ्यूम्स Rs 1,599 में, 60% छूट। ऑर्डर करेंगे?"
 PITCH_EN = "Supreme Perfume Box — 4 perfumes, Rs 1,599, 60% off. Want to order?"
 
+ORDER_COLLECT_HI = "बहुत अच्छा! कृपया अपना नाम, फ़ोन नंबर, ईमेल और पता (पिनकोड सहित) बता दीजिए।"
+ORDER_COLLECT_EN = "Great! Please share your name, phone number, email, and address with pincode."
+
 ASK_REASON_HI = "ठीक है, क्या वजह है?"
 ASK_REASON_EN = "No problem. May I know why?"
 
@@ -50,7 +53,7 @@ KNOWN_WORDS = set(
     "क्या है कैसे हैं क्यों नहीं कहाँ कब कौन "
     "supreme perfume box perfumes off order email name address phone payment pincode "
     "english hindi इंग्लिश हिंदी अंग्रेज़ी "
-    "ऑर्डर ईमेल नाम पता फ़ोन पेमेंट पिनकोड "
+    "ऑर्डर आर्डर ईमेल नाम पता फ़ोन पेमेंट पिनकोड "
     "बताइए बताईये बता दो आगे सुनिए बोलिए बताओ "
     "nahi nahin chahiye mana lena chahte karna karunga karungi "
     "nahi chahiye mana hai nahi lena nahi chahte nahi karna "
@@ -61,7 +64,22 @@ KNOWN_WORDS = set(
     "तो भी ही अब फिर क्योंकि लेकिन मगर "
     "मैंने उसने हमने तुमने आपने "
     "बता रही हूँ बता रहा हूँ बात कर रही हूँ बात कर रहा हूँ "
-    "अंग्लिश इंगलिश इंगलीश इंगलिज ".split()
+    "अंग्लिश इंगलिश इंगलीश इंगलिज "
+    "करो करे करेंगे करेए करदो कर दो कर दे करें करूँ "
+    "दो दे देंगे देंगे दूँगा दूंगी दें "
+    "चाहेंगे चाहूँगा चाहूंगी चाहते चाहता चाहती "
+    "लेंगे लूँगा लूंगी लेना ले लो लें "
+    "होंगे होऊँगा होऊंगी होगा होगी होंगी "
+    "परफ्यूम परफ्यूम्स पर्फ्यूम पर्फॉम परफॉम प्रीमियम प्रिफ़ंस "
+    "खरीदना खरीदेंगे खरीदूँगा खरीदूंगी खरीद लो खरीद लें "
+    "गईया भिया भैया काका आदे क्रेतना आओडर "
+    "कह रहे कह रही कह रहा बोल रहे बोल रही बोल रहा "
+    "रियो रेयो रहे रही रहा रहो रहें "
+    "सकते सकता सकती सकूँगा सकूंगी "
+    "प्लीज प्लीज़ please okay sure done yes no "
+    "हाँ हां हाँजी हाँ भी ना जी हाँ "
+    "अभी फिलहाल अभी के लिए अभी नहीं "
+    "सस्ता सस्ते सस्ती महँगा महँगी महँगे".split()
 )
 
 
@@ -87,6 +105,17 @@ INTEREST_RE = re.compile(
     r"समझ\s+में\s+नहीं|समझ\s+नहीं\s+रहा|समझ\s+नहीं\s+पा|समझ\s+नहीं\s+आ|समझ\s+नहीं\s+आप|"
     r"नहीं\s+बता|पूरा\s+नहीं\s+बता|नहीं\s+बतारें|नहीं\s+बताइए|"
     r"बिल्कुल[\s।,.]*(हाँ|जी|बताओ|बताइए|बोलिए|सुनाइए|करेंगे|ले लेंगे|चाहेंगे|प्लीज|please|ok|okay|sure|done|हां|हाँ))",
+    re.I
+)
+
+ORDER_INTENT_RE = re.compile(
+    r"(order|place order|buy|purchase|खरीद|ऑर्डर|आर्डर|आओडर|ले लेंगे|ले लो|ले लूँ|ले लूं|"
+    r"कर\s*दो|कर\s*दे|कर\s*दें|करेंगे|करूँगा|करूंगी|कर\s*लो|कर\s*लें|करेए|"
+    r"confirme?|confirm|yes order|yes buy|हाँ ऑर्डर|हाँ खरीद|"
+    r"book|booking|कितना|price|कीमत|दाम|payment|पेमेंट|"
+    r"name|नाम|address|पता|pincode|पिनकोड|phone|फ़ोन|email|ईमेल|"
+    r"कृपया|plz|please|kindly|"
+    r"क्रेतना|क्रेतेंगे|पर्फॉम|पर्फ्यूम|परफॉम|परफ्यूम)",
     re.I
 )
 
@@ -476,11 +505,77 @@ def process_call(
                 if m.get("role") == "assistant"
             )
             if pitch_given:
-                full_answer = None
+                full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
             else:
                 full_answer = PITCH_HI if lang == "hi" else PITCH_EN
         if full_answer:
-            print(f"INTEREST DETECTED — BYPASSING LLM, PITCH: {full_answer}")
+            is_order_collect = full_answer in (ORDER_COLLECT_HI, ORDER_COLLECT_EN)
+            action = "ORDER COLLECT" if is_order_collect else "PITCH"
+            print(f"INTEREST DETECTED — BYPASSING LLM, {action}: {full_answer}")
+            add_message(call_id, "assistant", full_answer)
+            output_file = f"audio/{call_id}.wav"
+            tts_lang = _get_tts_lang(lang, full_answer)
+            try:
+                speak(full_answer, output_file, tts_lang)
+            except Exception as e:
+                print("TTS ERROR:", e)
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": None,
+                    "segments": [],
+                    "hangup": False,
+                    "lang": lang,
+                }
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": output_file,
+                "segments": [(full_answer, output_file)],
+                "hangup": False,
+                "lang": lang,
+            }
+
+    is_order_intent = bool(ORDER_INTENT_RE.search(caller_text))
+    if is_order_intent:
+        pitch_given = any(
+            PITCH_HI in m.get("content", "") or PITCH_EN in m.get("content", "")
+            for m in sessions[call_id].get("messages", [])
+            if m.get("role") == "assistant"
+        )
+        if pitch_given:
+            full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
+            print(f"ORDER INTENT — BYPASSING LLM, COLLECTING DETAILS: {full_answer}")
+            add_message(call_id, "assistant", full_answer)
+            output_file = f"audio/{call_id}.wav"
+            tts_lang = _get_tts_lang(lang, full_answer)
+            try:
+                speak(full_answer, output_file, tts_lang)
+            except Exception as e:
+                print("TTS ERROR:", e)
+                return {
+                    "call_id": call_id,
+                    "caller": caller_text,
+                    "bot": full_answer,
+                    "audio": None,
+                    "segments": [],
+                    "hangup": False,
+                    "lang": lang,
+                }
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": output_file,
+                "segments": [(full_answer, output_file)],
+                "hangup": False,
+                "lang": lang,
+            }
+        else:
+            full_answer = PITCH_HI if lang == "hi" else PITCH_EN
+            print(f"ORDER INTENT (no pitch yet) — PITCHING: {full_answer}")
             add_message(call_id, "assistant", full_answer)
             output_file = f"audio/{call_id}.wav"
             tts_lang = _get_tts_lang(lang, full_answer)
