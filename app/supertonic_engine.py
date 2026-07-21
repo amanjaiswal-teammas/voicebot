@@ -5,6 +5,8 @@ import io
 import soundfile as sf
 import numpy as np
 
+from app.number_to_words import int_to_words_en, int_to_words_hi
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SUPERTONIC_DIR = os.path.abspath(
@@ -91,21 +93,29 @@ def _has_devanagari(text):
     return bool(re.search(r'[\u0900-\u097F]', text))
 
 
+def _convert_number(m, lang):
+    raw = m.group(0)
+    try:
+        n = int(raw)
+    except ValueError:
+        return raw
+    if lang == "hi":
+        return int_to_words_hi(n)
+    return int_to_words_en(n)
+
+
 def _normalize_for_tts(text, lang="en"):
+    # Replace "Rs" with spoken word, keep the number attached for conversion
     text = re.sub(r'\bRs\b', 'Rupees', text, flags=re.IGNORECASE)
+
+    # Strip commas from numbers: 1,599 -> 1599
     text = re.sub(r'(?<=\d),(?=\d)', '', text)
+
+    # Percent sign
     text = text.replace('%', ' percent ')
 
-    if lang == "hi":
-        digit_map = {
-            '0': 'शून्य', '1': 'एक', '2': 'दो', '3': 'तीन',
-            '4': 'चार', '5': 'पाँच', '6': 'छह', '7': 'सात',
-            '8': 'आठ', '9': 'नौ',
-        }
-        def replace_digits(m):
-            num = m.group(0)
-            return ' '.join(digit_map.get(d, d) for d in num)
-        text = re.sub(r'\b\d+\b', replace_digits, text)
+    # Convert digit sequences (amounts, prices, standalone numbers) to words
+    text = re.sub(r'\b\d+\b', lambda m: _convert_number(m, lang), text)
 
     text = re.sub(r'\s+', ' ', text).strip()
     return text
