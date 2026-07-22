@@ -14,20 +14,20 @@ SUPERTONIC_LANGS = {
 # ---------------------------------------------------------------------------
 # Canned responses
 # ---------------------------------------------------------------------------
-PITCH_HI = "Supreme Perfume Box — 4 प्रीमियम परफ्यूम्स Rs 1,599 में, 60% छूट। ऑर्डर करेंगे?"
-PITCH_EN = "Supreme Perfume Box — 4 perfumes, Rs 1,599, 60% off. Want to order?"
+PITCH_HI = "Supreme Perfume Box — 4 प्रीमियम परफ्यूम्स, सिर्फ़ Rs 1,599 में, 60% छूट। ऑर्डर करना चाहेंगे?"
+PITCH_EN = "Supreme Perfume Box — 4 premium perfumes for just Rs 1,599, that's 60% off. Would you like to order?"
 
-ORDER_COLLECT_HI = "बहुत अच्छा! कृपया अपना नाम, फ़ोन नंबर, ईमेल और पता (पिनकोड सहित) बता दीजिए।"
-ORDER_COLLECT_EN = "Great! Please share your name, phone number, email, and address with pincode."
+ORDER_COLLECT_HI = "बहुत अच्छा! अपना नाम, फ़ोन नंबर, ईमेल और पता — पिनकोड सहित बता दीजिए।"
+ORDER_COLLECT_EN = "Wonderful! Please share your name, phone number, email, and address with pincode."
 
-ASK_REASON_HI = "ठीक है, क्या वजह है?"
-ASK_REASON_EN = "No problem. May I know why?"
+ASK_REASON_HI = "कोई बात नहीं! क्या वजह है, बता सकती हैं?"
+ASK_REASON_EN = "No problem at all. May I ask why?"
 
-GOODBYE_HI = "शुक्रिया, अच्छा दिन हो!"
-GOODBYE_EN = "Thanks, have a great day!"
+GOODBYE_HI = "शुक्रिया आपका, अच्छा दिन हो!"
+GOODBYE_EN = "Thank you so much, have a wonderful day!"
 
-ASK_REPEAT_HI = "माफ़ कीजिए, क्या आप दोबारा बोल सकती हैं?"
-ASK_REPEAT_EN = "Sorry, could you repeat that?"
+ASK_REPEAT_HI = "माफ़ कीजिए, एक बार फिर से बोलेंगे?"
+ASK_REPEAT_EN = "Sorry, could you say that once more?"
 
 ORDER_MAX_TURNS = 8
 

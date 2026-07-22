@@ -112,7 +112,7 @@ def build_order_response(lang: str, details: dict) -> str:
 
     if lang == "hi":
         if collected:
-            return f"बहुत अच्छा! आपने {'/'.join(collected)} बताया। कृपया {' '.join(missing)} बता दीजिए।"
+            return f"बहुत अच्छा! आपने {'/'.join(collected)} बताया। अब {' '.join(missing)} बता दीजिए।"
         return ORDER_COLLECT_HI
     else:
         if collected:
@@ -127,14 +127,14 @@ def build_order_confirmation(lang: str, details: dict) -> str:
             f"बहुत अच्छा! आपका ऑर्डर कन्फ़र्म हो गया है। "
             f"नाम {details.get('name', '')}, फ़ोन {details.get('phone', '')}, "
             f"ईमेल {details.get('email', '')}, पता {details.get('address', '')} {details.get('pincode', '')}। "
-            f"Supreme Perfume Box — Rs 1,599। शुक्रिया!"
+            f"Supreme Perfume Box — Rs 1,599। शुक्रिया आपका!"
         )
     else:
         return (
             f"Your order is confirmed! "
             f"Name: {details.get('name', '')}, Phone: {details.get('phone', '')}, "
             f"Email: {details.get('email', '')}, Address: {details.get('address', '')} {details.get('pincode', '')}. "
-            f"Supreme Perfume Box — Rs 1,599. Thank you!"
+            f"Supreme Perfume Box — Rs 1,599. Thank you so much!"
         )
 
 

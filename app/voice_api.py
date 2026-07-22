@@ -20,17 +20,13 @@ AUDIO_DIR = "audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 GREETING_TEXT = (
-    "Good morning. This is BellaVita. "
-    "You added a product to your cart - "
-    "we have an exclusive discount for you today. "
-    "May I tell you more about it?"
+    "Hello, this is BellaVita. "
+    "You left something in your cart and we have a great offer on it today — want to hear about it?"
 )
 
 GREETING_TEXT_HI = (
     "हैलो, BellaVita से बोल रही हूँ। "
-    "आपने अपने कार्ट में एक प्रोडक्ट रखा था, "
-    "उस पर आज बहुत अच्छा ऑफ़र चल रहा है। "
-    "बताऊँ?"
+    "आपने कार्ट में जो प्रोडक्ट रखा था उस पर आज शानदार ऑफ़र है — सुनना चाहेंगे?"
 )
 
 _cached_greeting_ulaw: Optional[bytes] = None

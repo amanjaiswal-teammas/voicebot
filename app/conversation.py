@@ -235,7 +235,7 @@ def _handle_awaiting_reason(call_id, caller_text, session, lang):
             "[Customer just gave a reason for refusing. DO NOT ask 'क्या वजह है?' again. "
             f'Customer said: "{caller_text}". '
             "Address their concern directly. If cheaper: say 'हमारे पास 60% छूट है, यह बहुत अच्छा ऑफ़र है।' "
-            "Then ask once more if they want to order. If still no, say goodbye.]"
+            "Then ask once more politely: 'एक बार सोच कर बताइए?' If still no, say goodbye.]"
         )
     else:
         reason_msg = (
@@ -580,9 +580,9 @@ def _handle_silent(call_id, interrupted_text, lang):
 
     silent_lang = lang if lang in SUPERTONIC_LANGS else "en"
     if silent_lang == "hi":
-        msg = "माफ़ कीजिए, मैं समझ नहीं पाई। क्या आप दोबारा बोल सकती हैं?"
+        msg = "माफ़ कीजिए, समझ नहीं पाई। एक बार फिर से बोलेंगे?"
     else:
-        msg = "Sorry, I didn't catch that. Could you please repeat?"
+        msg = "Sorry, I didn't catch that. Could you say that once more?"
 
     output = f"audio/{call_id}_retry.wav"
     speak(msg, output, "hi" if silent_lang == "hi" else "en")
