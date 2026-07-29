@@ -37,7 +37,7 @@ _cached_greeting_segments_hi: Optional[str] = None
 app = FastAPI()
 
 
-def _trim_silence(input_path: str, threshold: float = 0.02, padding: float = 0.3) -> str:
+def _trim_silence(input_path: str, threshold: float = 0.01, padding: float = 0.15) -> str:
     data, sr = sf.read(input_path)
     if len(data.shape) > 1:
         data = data.mean(axis=1)
@@ -164,9 +164,9 @@ async def check_speech(audio: UploadFile = File(...)):
     if np.isnan(rms) or np.isinf(rms):
         print(f"CHECK-SPEECH: bad rms={rms} len={len(data)}")
         rms = 0.0
-    active = int(np.sum(np.abs(data) > 0.005))
+    active = int(np.sum(np.abs(data) > 0.003))
     active_ms = active / sr * 1000
-    speech = rms > 0.015 and active_ms > 80
+    speech = rms > 0.008 and active_ms > 60
     print(f"CHECK-SPEECH: rms={rms:.5f} active={active_ms:.0f}ms "
           f"speech={speech} len={len(data)}")
     return {"speech_detected": speech, "rms": rms}
@@ -217,15 +217,16 @@ async def voice_audio_segmented(
     if diag_data is None or len(diag_data) == 0:
         result = process_call(call_id, None, interrupted_text=interrupted_text)
     else:
-        active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > 0.02))
+        active_thresh = max(0.005, np.std(diag_data) * 1.5)
+        active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > active_thresh))
         active_ms = active / max(diag_sr, 1) * 1000
-        min_active = 80 if interrupted_text else 200
-        treat_silent = rms < 0.01 or active_ms < min_active
-        print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms treat_silent={treat_silent}")
+        min_active = 50 if interrupted_text else 120
+        treat_silent = rms < 0.005 or active_ms < min_active
+        print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
         if treat_silent:
             result = process_call(call_id, None, interrupted_text=interrupted_text)
         else:
-            trimmed = _trim_silence(temp_file)
+            trimmed = _trim_silence(temp_file, threshold=0.01, padding=0.15)
             result = process_call(call_id, trimmed, interrupted_text=interrupted_text)
             if trimmed != temp_file and os.path.exists(trimmed):
                 os.remove(trimmed)
