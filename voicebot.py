@@ -108,7 +108,7 @@ def concat_wavs(paths, output_path):
 
 def detect_voice_bargein(call_id):
     check_file = f"{RECORD_DIR}/{call_id}_check"
-    result = agi_cmd(f'RECORD FILE {check_file} wav "" 400')
+    result = agi_cmd(f'RECORD FILE {check_file} wav "" 800')
     log(f"CHECK RECORD={result}")
 
     if "result=-1" in result:

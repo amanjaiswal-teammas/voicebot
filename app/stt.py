@@ -72,10 +72,10 @@ def transcribe(audio_file, language_hint=None):
         initial_prompt=initial_prompt,
         beam_size=5,
         best_of=3,
-        vad_filter=False,
+        vad_filter=True,
         vad_parameters=dict(
-            threshold=0.6,
-            min_speech_duration_ms=150,
+            threshold=0.5,
+            min_speech_duration_ms=100,
             min_silence_duration_ms=100,
         ),
     )

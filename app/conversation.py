@@ -468,6 +468,11 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
         caller_text = stt_result["text"]
         whisper_lang = stt_result["language"]
 
+        # Map Indic languages that Whisper detects for Indian callers
+        _INDIC_TO_HI = {"ur", "mr", "gu", "bn", "or", "pa", "ne", "sd"}
+        if whisper_lang in _INDIC_TO_HI:
+            whisper_lang = "hi"
+
         switch_lang = detect_language_switch(caller_text)
         if switch_lang:
             lang = switch_lang
@@ -477,7 +482,7 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
             text_lang = detect_language(caller_text)
             if text_lang == "hi":
                 lang = "hi"
-            elif text_lang == "en":
+            elif text_lang == "en" and whisper_lang != "hi":
                 lang = "en"
             elif whisper_lang in ("hi", "en"):
                 lang = whisper_lang
