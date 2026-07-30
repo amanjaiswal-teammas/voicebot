@@ -565,6 +565,169 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
     return _handle_llm(call_id, caller_text, session, lang)
 
 
+# ============================================================================
+# Support call flow (inbound customer complaints)
+# ============================================================================
+
+def _handle_support_llm(call_id, caller_text, session, lang):
+    print("STEP 2: SUPPORT LLM")
+
+    history = get_history(call_id)[-6:]
+
+    llm_start = time.time()
+    full_answer = ""
+    hangup = False
+    tts_lang = _get_tts_lang(lang, "")
+    segments = []
+    pending_text = ""
+
+    for sentence, is_done, seg_hangup in ask_llm_stream(history, lang, mode="support"):
+        elapsed = int((time.time() - llm_start) * 1000)
+
+        if is_done:
+            full_answer = _post_process(sentence, lang)
+            hangup = seg_hangup
+            print(f"SUPPORT LLM DONE: {elapsed}ms answer_len={len(full_answer)}")
+        else:
+            processed = _post_process(sentence, lang)
+            pending_text += (" " if pending_text else "") + processed
+            print(f"SUPPORT LLM SENTENCE ({elapsed}ms): {processed[:60]}...")
+
+            tts_lang = _get_tts_lang(lang, processed)
+            seg_path = f"audio/{call_id}_support_{len(segments)}.wav"
+            try:
+                speak(processed, seg_path, tts_lang)
+                segments.append((processed, seg_path))
+            except Exception as e:
+                print(f"SUPPORT TTS STREAM ERROR: {e}")
+
+    if not full_answer:
+        full_answer = pending_text
+
+    if pending_text and not segments:
+        tts_lang = _get_tts_lang(lang, pending_text)
+        seg_path = f"audio/{call_id}_support_0.wav"
+        try:
+            speak(pending_text, seg_path, tts_lang)
+            segments.append((pending_text, seg_path))
+        except Exception as e:
+            print(f"SUPPORT TTS FINAL ERROR: {e}")
+
+    add_message(call_id, "assistant", full_answer)
+    print("SUPPORT BOT:", full_answer)
+    print(f"SUPPORT_HANGUP={hangup}")
+
+    if not hangup:
+        hangup = _detect_goodbye(caller_text, full_answer)
+
+    output_file = f"audio/{call_id}_support.wav"
+
+    if segments:
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": output_file,
+            "segments": segments,
+            "hangup": hangup,
+            "lang": lang,
+        }
+
+    tts_lang = _get_tts_lang(lang, full_answer)
+    try:
+        speak(full_answer, output_file, tts_lang)
+    except Exception as e:
+        print("SUPPORT TTS ERROR:", e)
+        return {
+            "call_id": call_id,
+            "caller": caller_text,
+            "bot": full_answer,
+            "audio": None,
+            "segments": [],
+            "hangup": hangup,
+            "lang": lang,
+        }
+
+    return {
+        "call_id": call_id,
+        "caller": caller_text,
+        "bot": full_answer,
+        "audio": output_file,
+        "segments": [(full_answer, output_file)],
+        "hangup": hangup,
+        "lang": lang,
+    }
+
+
+def process_support_call(call_id, audio_file, interrupted_text=None):
+    """Handle an inbound support call — complaints, refunds, delivery issues."""
+
+    print("SUPPORT CALL: STEP 1 STT")
+    print("INPUT AUDIO:", audio_file)
+
+    start_total = time.time()
+
+    if call_id not in sessions:
+        sessions[call_id] = {}
+
+    session = sessions[call_id]
+    prev_lang = session.get("last_lang")
+
+    # STT + language detection
+    if audio_file is None:
+        caller_text = ""
+        lang = prev_lang or "hi"
+    else:
+        stt_start = time.time()
+        stt_result = transcribe(audio_file, language_hint=prev_lang)
+        caller_text = stt_result["text"]
+        whisper_lang = stt_result["language"]
+
+        _INDIC_TO_HI = {"ur", "mr", "gu", "bn", "or", "pa", "ne", "sd"}
+        if whisper_lang in _INDIC_TO_HI:
+            whisper_lang = "hi"
+
+        switch_lang = detect_language_switch(caller_text)
+        if switch_lang:
+            lang = switch_lang
+            text_lang = lang
+            print(f"LANGUAGE SWITCH DETECTED → {lang}")
+        else:
+            text_lang = detect_language(caller_text)
+            if text_lang == "hi":
+                lang = "hi"
+            elif text_lang == "en" and whisper_lang != "hi":
+                lang = "en"
+            elif whisper_lang in ("hi", "en"):
+                lang = whisper_lang
+            else:
+                lang = prev_lang or "hi"
+
+        print("WHISPER LANG:", whisper_lang, "| TEXT LANG:", text_lang,
+              "| FINAL LANG:", lang, "| PREV LANG:", prev_lang)
+        print("STT:", int((time.time() - stt_start) * 1000), "ms")
+
+    # Silent / empty
+    if not caller_text.strip():
+        return _handle_silent(call_id, interrupted_text, lang)
+
+    print("CALLER:", caller_text)
+    session["silent_retries"] = 0
+    session["last_lang"] = lang
+
+    # Barge-in context
+    if interrupted_text and not detect_language_switch(caller_text):
+        context = (
+            f'[Customer interrupted. Customer said: "{caller_text}". '
+            f"Respond to what the customer said.]"
+        )
+        print("SUPPORT INTERRUPTED CONTEXT:", context)
+        add_message(call_id, "system", context)
+
+    add_message(call_id, "user", caller_text)
+    return _handle_support_llm(call_id, caller_text, session, lang)
+
+
 def _handle_silent(call_id, interrupted_text, lang):
     if interrupted_text:
         print("EMPTY BARGE-IN — skipping sorry, will re-listen")

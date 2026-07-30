@@ -25,16 +25,19 @@ def agi_cmd(cmd):
     return sys.stdin.readline().strip()
 
 
-def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None):
+def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inbound=False):
     if audio_path:
+        data = {
+            "call_id": call_id,
+            "interrupted_text": interrupted_text or "",
+        }
+        if inbound:
+            data["inbound"] = "true"
         with open(audio_path, "rb") as f:
             r = requests.post(
                 f"{API_BASE}/voice-audio-segmented",
                 files={"audio": f},
-                data={
-                    "call_id": call_id,
-                    "interrupted_text": interrupted_text or "",
-                },
+                data=data,
                 timeout=120,
             )
     else:
@@ -44,6 +47,8 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None):
         }
         if lang:
             post_data["lang"] = lang
+        if inbound:
+            post_data["inbound"] = "true"
         r = requests.post(
             f"{API_BASE}/voice-audio-segmented",
             data=post_data,
@@ -108,7 +113,7 @@ def concat_wavs(paths, output_path):
 
 def detect_voice_bargein(call_id):
     check_file = f"{RECORD_DIR}/{call_id}_check"
-    result = agi_cmd(f'RECORD FILE {check_file} wav "" 800')
+    result = agi_cmd(f'RECORD FILE {check_file} wav "" 400')
     log(f"CHECK RECORD={result}")
 
     if "result=-1" in result:
@@ -216,13 +221,15 @@ try:
             agi_env[k.strip()] = v.strip()
 
     call_id = str(uuid.uuid4())
-    log(f"CALL_ID={call_id}")
+    call_type = agi_env.get("agi_arg_1", "").strip().lower()
+    inbound = call_type == "inbound"
+    log(f"CALL_ID={call_id} TYPE={'inbound' if inbound else 'outbound'}")
 
-    greeting_lang = "hi"
+    greeting_lang = "hi" if inbound else "en"
     log(f"GREETING LANG: {greeting_lang}")
 
     log("REQUESTING SEGMENTED GREETING")
-    greeting_data = get_segments(call_id, lang=greeting_lang)
+    greeting_data = get_segments(call_id, lang=greeting_lang, inbound=inbound)
     if greeting_data is None:
         log("FAILED TO GET GREETING")
         raise SystemExit(1)
@@ -256,9 +263,10 @@ try:
                 call_id,
                 audio_path=rec_path,
                 interrupted_text=interrupted_text,
+                inbound=inbound,
             )
         else:
-            api_data = get_segments(call_id, audio_path=rec_path)
+            api_data = get_segments(call_id, audio_path=rec_path, inbound=inbound)
 
         os.remove(rec_path)
 

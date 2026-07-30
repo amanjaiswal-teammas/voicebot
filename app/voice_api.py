@@ -13,7 +13,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
 
 from .session import create_session
-from .conversation import process_call
+from .conversation import process_call, process_support_call
 from .memory import add_message
 from .supertonic_engine import speak_segments, speak
 
@@ -30,10 +30,22 @@ GREETING_TEXT_HI = (
     "आपने कार्ट में जो प्रोडक्ट रखा था उस पर आज शानदार ऑफ़र है — सुनना चाहेंगे?"
 )
 
+SUPPORT_GREETING = (
+    "Hello, this is BellaVita customer support. "
+    "How can I help you today?"
+)
+
+SUPPORT_GREETING_HI = (
+    "नमस्ते, BellaVita कस्टमर सपोर्ट से बोल रही हूँ। "
+    "बताइए, किस समस्या के लिए कॉल किया है?"
+)
+
 _cached_greeting_ulaw: Optional[bytes] = None
 _cached_greeting_segments: Optional[str] = None
 _cached_greeting_ulaw_hi: Optional[bytes] = None
 _cached_greeting_segments_hi: Optional[str] = None
+_cached_support_greeting_segments: Optional[str] = None
+_cached_support_greeting_segments_hi: Optional[str] = None
 
 app = FastAPI()
 
@@ -78,6 +90,7 @@ def _audio_to_ulaw(input_path: str) -> bytes:
 def _preload_greeting():
     global _cached_greeting_ulaw, _cached_greeting_segments
     global _cached_greeting_ulaw_hi, _cached_greeting_segments_hi
+    global _cached_support_greeting_segments, _cached_support_greeting_segments_hi
     from .supertonic_engine import get_tts, speak
 
     print("PRELOAD: Loading TTS model...")
@@ -122,6 +135,34 @@ def _preload_greeting():
         })
     _cached_greeting_segments_hi = json.dumps(
         {"call_id": "", "segments": segments_json_hi, "hangup": False}
+    )
+
+    print("PRELOAD: Preloading English support greeting...")
+    segs_sup = speak_segments(SUPPORT_GREETING, "en", prefix="support_greeting")
+    segs_sup_json = []
+    for text, seg_path in segs_sup:
+        ulaw_bytes = _audio_to_ulaw(seg_path)
+        os.remove(seg_path)
+        segs_sup_json.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+    _cached_support_greeting_segments = json.dumps(
+        {"call_id": "", "segments": segs_sup_json, "hangup": False}
+    )
+
+    print("PRELOAD: Preloading Hindi support greeting...")
+    segs_sup_hi = speak_segments(SUPPORT_GREETING_HI, "hi", prefix="support_greeting_hi")
+    segs_sup_hi_json = []
+    for text, seg_path in segs_sup_hi:
+        ulaw_bytes = _audio_to_ulaw(seg_path)
+        os.remove(seg_path)
+        segs_sup_hi_json.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+    _cached_support_greeting_segments_hi = json.dumps(
+        {"call_id": "", "segments": segs_sup_hi_json, "hangup": False}
     )
 
     print("PRELOAD: All greetings cached.")
@@ -235,13 +276,14 @@ async def voice_audio_segmented(
     audio: Optional[UploadFile] = File(None),
     call_id: str = Form(None),
     outbound: bool = Form(False),
+    inbound: bool = Form(False),
     interrupted_text: Optional[str] = Form(None),
     lang: Optional[str] = Form(None),
 ):
     if not call_id:
         call_id = create_session()
 
-    print(f"SEG-API: call_id={call_id} outbound={outbound} interrupted_text='{interrupted_text}' lang='{lang}'")
+    print(f"SEG-API: call_id={call_id} outbound={outbound} inbound={inbound} interrupted_text='{interrupted_text}' lang='{lang}'")
 
     if outbound:
         greeting_lang = lang if lang in ("hi", "en") else "en"
@@ -255,6 +297,22 @@ async def voice_audio_segmented(
             media_type="application/json",
         )
 
+    if inbound and audio is None:
+        greeting_lang = lang if lang in ("hi", "en") else "en"
+        greeting_text = SUPPORT_GREETING_HI if greeting_lang == "hi" else SUPPORT_GREETING
+        add_message(call_id, "assistant", greeting_text)
+        cached = (_cached_support_greeting_segments_hi if greeting_lang == "hi"
+                  else _cached_support_greeting_segments)
+        data = json.loads(cached)
+        data["call_id"] = call_id
+        return Response(
+            content=json.dumps(data),
+            media_type="application/json",
+        )
+
+    # Select conversation flow
+    _process = process_support_call if inbound else process_call
+
     if audio is None:
         raise HTTPException(status_code=400, detail="Audio file missing")
 
@@ -263,13 +321,13 @@ async def voice_audio_segmented(
         raw = await audio.read()
         if not raw or len(raw) < 44:
             print(f"SEG AUDIO: empty or too small ({len(raw)} bytes) — treating as silent")
-            result = process_call(call_id, None, interrupted_text=interrupted_text)
+            result = _process(call_id, None, interrupted_text=interrupted_text)
             return _build_api_response(result, call_id)
         with open(temp_file, "wb") as f:
             f.write(raw)
     except Exception as e:
         print(f"SEG AUDIO WRITE ERROR: {e}")
-        result = process_call(call_id, None, interrupted_text=interrupted_text)
+        result = _process(call_id, None, interrupted_text=interrupted_text)
         return _build_api_response(result, call_id)
 
     try:
@@ -283,7 +341,7 @@ async def voice_audio_segmented(
         diag_data = None
 
     if diag_data is None or len(diag_data) == 0:
-        result = process_call(call_id, None, interrupted_text=interrupted_text)
+        result = _process(call_id, None, interrupted_text=interrupted_text)
     else:
         active_thresh = max(0.005, np.std(diag_data) * 1.5)
         active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > active_thresh))
@@ -292,10 +350,10 @@ async def voice_audio_segmented(
         treat_silent = rms < 0.005 or active_ms < min_active
         print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
         if treat_silent:
-            result = process_call(call_id, None, interrupted_text=interrupted_text)
+            result = _process(call_id, None, interrupted_text=interrupted_text)
         else:
             trimmed = _trim_silence(temp_file, threshold=0.01, padding=0.15)
-            result = process_call(call_id, trimmed, interrupted_text=interrupted_text)
+            result = _process(call_id, trimmed, interrupted_text=interrupted_text)
             if trimmed != temp_file and os.path.exists(trimmed):
                 os.remove(trimmed)
     if os.path.exists(temp_file):
