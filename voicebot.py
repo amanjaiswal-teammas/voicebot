@@ -8,6 +8,7 @@ import requests
 import traceback
 import os
 import uuid
+import time
 
 API_BASE = "http://127.0.0.1:8000"
 RECORD_DIR = "/var/lib/asterisk/sounds/voicebot"
@@ -25,6 +26,18 @@ def agi_cmd(cmd):
     return sys.stdin.readline().strip()
 
 
+def _api_post(url, max_retries=3, retry_delay=2, **kwargs):
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(url, timeout=120, **kwargs)
+            return r
+        except requests.exceptions.ConnectionError as e:
+            log(f"API CONNECTION ERROR (attempt {attempt+1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+    return None
+
+
 def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inbound=False):
     if audio_path:
         data = {
@@ -34,11 +47,10 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inb
         if inbound:
             data["inbound"] = "true"
         with open(audio_path, "rb") as f:
-            r = requests.post(
+            r = _api_post(
                 f"{API_BASE}/voice-audio-segmented",
                 files={"audio": f},
                 data=data,
-                timeout=120,
             )
     else:
         post_data = {
@@ -49,11 +61,12 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inb
             post_data["lang"] = lang
         if inbound:
             post_data["inbound"] = "true"
-        r = requests.post(
+        r = _api_post(
             f"{API_BASE}/voice-audio-segmented",
             data=post_data,
-            timeout=120,
         )
+    if r is None:
+        return None
     if r.status_code != 200:
         log(f"API ERROR: {r.status_code} {r.text}")
         return None
@@ -61,14 +74,17 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inb
 
 
 def check_speech(audio_path):
-    with open(audio_path, "rb") as f:
-        r = requests.post(
-            f"{API_BASE}/check-speech",
-            files={"audio": f},
-            timeout=10,
-        )
-    if r.status_code == 200:
-        return r.json().get("speech_detected", False)
+    try:
+        with open(audio_path, "rb") as f:
+            r = requests.post(
+                f"{API_BASE}/check-speech",
+                files={"audio": f},
+                timeout=10,
+            )
+        if r.status_code == 200:
+            return r.json().get("speech_detected", False)
+    except requests.exceptions.ConnectionError:
+        pass
     return False
 
 
