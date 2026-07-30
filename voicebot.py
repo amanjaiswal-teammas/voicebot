@@ -55,12 +55,13 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inb
     else:
         post_data = {
             "call_id": call_id,
-            "outbound": "true",
         }
-        if lang:
-            post_data["lang"] = lang
         if inbound:
             post_data["inbound"] = "true"
+        else:
+            post_data["outbound"] = "true"
+        if lang:
+            post_data["lang"] = lang
         r = _api_post(
             f"{API_BASE}/voice-audio-segmented",
             data=post_data,

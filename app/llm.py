@@ -9,7 +9,6 @@ from .bellavita_prompt import (
 )
 from .support_prompt import (
     SYSTEM_PROMPT_BASE as SUPPORT_BASE,
-    SYSTEM_PROMPT_HI as SUPPORT_HI,
     SYSTEM_PROMPT_EN as SUPPORT_EN,
 )
 
@@ -44,10 +43,7 @@ SUPPORT_SHORT_INSTRUCTION = (
 def _build_system_prompt(lang, mode="sales"):
     if mode == "support":
         system_content = SUPPORT_BASE
-        if lang == "hi":
-            system_content += SUPPORT_HI
-        else:
-            system_content += SUPPORT_EN
+        system_content += SUPPORT_EN
         system_content += SUPPORT_SHORT_INSTRUCTION
     else:
         system_content = SALES_BASE
