@@ -149,16 +149,14 @@ def ask_llm_stream(messages, lang="en"):
 
     full_answer = ""
     hangup = False
-    think_buf = ""
     in_think = False
     yielded_up_to = 0
 
-    for line in response.iter_lines():
+    for line in response.iter_lines(decode_unicode=True):
         if not line:
             continue
 
         try:
-            import json
             data = json.loads(line)
         except Exception:
             continue
@@ -172,26 +170,24 @@ def ask_llm_stream(messages, lang="en"):
         if not token:
             continue
 
-        full_answer += token
-
+        # ---- Think block handling ----
         if "<think>" in token:
             in_think = True
-            think_buf += token
+            before, _, after = token.partition("<think>")
+            full_answer += before
             continue
 
         if in_think:
-            think_buf += token
             if "</think>" in token:
                 in_think = False
-                think_end = think_buf.find("</think>")
-                after_think = think_buf[think_end + 8:]
-                if after_think.strip():
-                    full_answer = after_think.strip()
-                else:
-                    full_answer = full_answer.replace(think_buf, "").strip()
-                think_buf = ""
+                _, _, after = token.partition("</think>")
+                full_answer += after
+                yielded_up_to = min(yielded_up_to, len(full_answer))
             continue
 
+        full_answer += token
+
+        # ---- Sentence detection & yielding ----
         clean = re.sub(r"<think>.*?</think>", "", full_answer, flags=re.S).strip()
         sentences = re.split(r'(?<=[.!?।])\s+', clean)
         if len(sentences) >= 2:
@@ -210,6 +206,10 @@ def ask_llm_stream(messages, lang="en"):
         full_answer,
         flags=re.S
     ).strip()
+
+    # Clean any unclosed think blocks
+    if "<think>" in full_answer:
+        full_answer = full_answer.split("<think>")[0].strip()
 
     if "[HANGUP]" in full_answer:
         hangup = True

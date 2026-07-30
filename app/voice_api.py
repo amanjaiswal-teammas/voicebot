@@ -4,6 +4,7 @@ import json
 import wave
 import base64
 import audioop
+import asyncio
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
@@ -141,10 +142,67 @@ def _warmup_ollama():
         print(f"WARMUP FAILED: {e}")
 
 
+def _build_api_response(result: dict, call_id: str) -> Response:
+    bot_text = result.get("bot", "")
+    hangup = result.get("hangup", False)
+    lang = result.get("lang", "en")
+    pre_segments = result.get("segments", [])
+
+    if not bot_text or not bot_text.strip():
+        if hangup:
+            return Response(
+                content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
+                media_type="application/json",
+            )
+        return Response(
+            content=json.dumps({"call_id": call_id, "segments": [], "hangup": False}),
+            media_type="application/json",
+        )
+
+    if pre_segments:
+        segments_json = []
+        for text, path in pre_segments:
+            if os.path.exists(path):
+                ulaw_bytes = _audio_to_ulaw(path)
+                os.remove(path)
+                segments_json.append({
+                    "text": text,
+                    "audio": base64.b64encode(ulaw_bytes).decode(),
+                })
+        resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
+        print(f"API RESPONSE (pre-gen): hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
+        return Response(content=json.dumps(resp), media_type="application/json")
+
+    from .conversation import _get_tts_lang
+    tts_lang = _get_tts_lang(lang, bot_text)
+    segs = speak_segments(bot_text, tts_lang, prefix=call_id)
+    segments_json = []
+    for text, path in segs:
+        ulaw_bytes = _audio_to_ulaw(path)
+        os.remove(path)
+        segments_json.append({
+            "text": text,
+            "audio": base64.b64encode(ulaw_bytes).decode(),
+        })
+
+    resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
+    print(f"API RESPONSE: hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
+    return Response(content=json.dumps(resp), media_type="application/json")
+
+
 @app.on_event("startup")
 async def startup():
-    _preload_greeting()
-    _warmup_ollama()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _preload_greeting)
+    await loop.run_in_executor(None, _warmup_ollama)
+
+    async def _cleanup_loop():
+        while True:
+            await asyncio.sleep(300)
+            from .session import cleanup_expired
+            await loop.run_in_executor(None, cleanup_expired)
+
+    asyncio.create_task(_cleanup_loop())
 
 
 @app.post("/check-speech")
@@ -201,8 +259,18 @@ async def voice_audio_segmented(
         raise HTTPException(status_code=400, detail="Audio file missing")
 
     temp_file = f"{AUDIO_DIR}/{call_id}_in.wav"
-    with open(temp_file, "wb") as f:
-        f.write(await audio.read())
+    try:
+        raw = await audio.read()
+        if not raw or len(raw) < 44:
+            print(f"SEG AUDIO: empty or too small ({len(raw)} bytes) — treating as silent")
+            result = process_call(call_id, None, interrupted_text=interrupted_text)
+            return _build_api_response(result, call_id)
+        with open(temp_file, "wb") as f:
+            f.write(raw)
+    except Exception as e:
+        print(f"SEG AUDIO WRITE ERROR: {e}")
+        result = process_call(call_id, None, interrupted_text=interrupted_text)
+        return _build_api_response(result, call_id)
 
     try:
         diag_data, diag_sr = sf.read(temp_file)
@@ -233,60 +301,7 @@ async def voice_audio_segmented(
     if os.path.exists(temp_file):
         os.remove(temp_file)
 
-    bot_text = result.get("bot", "")
-    hangup = result.get("hangup", False)
-    lang = result.get("lang", "en")
-    pre_segments = result.get("segments", [])
-
-    if not bot_text or not bot_text.strip():
-        if hangup:
-            print(f"API: empty bot_text → hangup=True")
-            return Response(
-                content=json.dumps({"call_id": call_id, "segments": [], "hangup": True}),
-                media_type="application/json",
-            )
-        print(f"API: empty bot_text → silent skip")
-        return Response(
-            content=json.dumps({"call_id": call_id, "segments": [], "hangup": False}),
-            media_type="application/json",
-        )
-
-    if pre_segments:
-        segments_json = []
-        for text, path in pre_segments:
-            if os.path.exists(path):
-                ulaw_bytes = _audio_to_ulaw(path)
-                os.remove(path)
-                segments_json.append({
-                    "text": text,
-                    "audio": base64.b64encode(ulaw_bytes).decode(),
-                })
-        resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
-        print(f"API RESPONSE (pre-gen): hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
-        return Response(
-            content=json.dumps(resp),
-            media_type="application/json",
-        )
-
-    from .conversation import _get_tts_lang
-    tts_lang = _get_tts_lang(lang, bot_text)
-
-    segs = speak_segments(bot_text, tts_lang, prefix=call_id)
-    segments_json = []
-    for text, path in segs:
-        ulaw_bytes = _audio_to_ulaw(path)
-        os.remove(path)
-        segments_json.append({
-            "text": text,
-            "audio": base64.b64encode(ulaw_bytes).decode(),
-        })
-
-    resp = {"call_id": call_id, "segments": segments_json, "hangup": hangup}
-    print(f"API RESPONSE: hangup={hangup} bot_text_len={len(bot_text)} segments={len(segments_json)}")
-    return Response(
-        content=json.dumps(resp),
-        media_type="application/json",
-    )
+    return _build_api_response(result, call_id)
 
 
 @app.post("/voice-audio")

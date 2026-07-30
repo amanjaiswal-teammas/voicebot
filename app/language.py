@@ -93,7 +93,7 @@ def detect_language(text):
         if w in HINGLISH_WORDS
     )
 
-    if matches >= 1:
+    if matches >= 2:
         return "hi"
 
     return "en"

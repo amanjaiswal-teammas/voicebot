@@ -593,6 +593,6 @@ def _handle_silent(call_id, interrupted_text, lang):
     speak(msg, output, "hi" if silent_lang == "hi" else "en")
 
     return {
-        "call_id": call_id, "caller": "", "bot": "Sorry, I didn't catch that.",
-        "audio": output, "segments": [], "lang": silent_lang,
+        "call_id": call_id, "caller": "", "bot": msg,
+        "audio": output, "segments": [(msg, output)], "lang": silent_lang,
     }

@@ -151,13 +151,19 @@ def _extract_phone(text_lower: str):
     if m:
         return m.group(1).replace(" ", "")
 
-    # Spoken-word fallback
-    digits_only = text_lower
-    for word, digit in sorted(_WORD_TO_DIGIT.items(), key=lambda x: -len(x[0])):
-        digits_only = digits_only.replace(word, digit)
-    digits_only = re.sub(r'[^0-9]', '', digits_only)
-    if len(digits_only) >= 7:
-        return digits_only
+    # Spoken-word fallback — only apply in short segments near "phone" indicators
+    phone_ctx = re.search(
+        r'(?:phone|फ़ोन|फोन|mobile|number|नंबर|मोबाइल)[^\d]{0,40}'
+        r'([\w\s]{5,40})',
+        text_lower, re.I,
+    )
+    if phone_ctx:
+        candidate = phone_ctx.group(1)
+        for word, digit in sorted(_WORD_TO_DIGIT.items(), key=lambda x: -len(x[0])):
+            candidate = candidate.replace(word, digit)
+        digits_only = re.sub(r'[^0-9]', '', candidate)
+        if len(digits_only) >= 7:
+            return digits_only
     return None
 
 

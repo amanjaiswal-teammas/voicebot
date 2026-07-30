@@ -64,7 +64,7 @@ def get_tts():
 
 
 def split_into_segments(text, max_words=12):
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = re.split(r'(?<=[.!?।])\s+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
     if not sentences:
         return [text]
