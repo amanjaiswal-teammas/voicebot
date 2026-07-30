@@ -1,5 +1,6 @@
 import requests
 import re
+import json
 
 from .config import OLLAMA_HOST, MODEL_NAME
 from .bellavita_prompt import (
