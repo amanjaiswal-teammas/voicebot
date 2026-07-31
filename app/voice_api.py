@@ -35,17 +35,17 @@ SUPPORT_GREETING = (
     "How can I help you today?"
 )
 
-SUPPORT_GREETING_HI = (
-    "नमस्ते, BellaVita कस्टमर सपोर्ट से बोल रही हूँ। "
-    "बताइए, किस समस्या के लिए कॉल किया है?"
-)
+# SUPPORT_GREETING_HI = (
+#     "नमस्ते, BellaVita कस्टमर सपोर्ट से बोल रही हूँ। "
+#     "बताइए, किस समस्या के लिए कॉल किया है?"
+# )
 
 _cached_greeting_ulaw: Optional[bytes] = None
 _cached_greeting_segments: Optional[str] = None
 _cached_greeting_ulaw_hi: Optional[bytes] = None
 _cached_greeting_segments_hi: Optional[str] = None
 _cached_support_greeting_segments: Optional[str] = None
-_cached_support_greeting_segments_hi: Optional[str] = None
+# _cached_support_greeting_segments_hi: Optional[str] = None
 
 app = FastAPI()
 
@@ -151,19 +151,19 @@ def _preload_greeting():
         {"call_id": "", "segments": segs_sup_json, "hangup": False}
     )
 
-    print("PRELOAD: Preloading Hindi support greeting...")
-    segs_sup_hi = speak_segments(SUPPORT_GREETING_HI, "hi", prefix="support_greeting_hi")
-    segs_sup_hi_json = []
-    for text, seg_path in segs_sup_hi:
-        ulaw_bytes = _audio_to_ulaw(seg_path)
-        os.remove(seg_path)
-        segs_sup_hi_json.append({
-            "text": text,
-            "audio": base64.b64encode(ulaw_bytes).decode(),
-        })
-    _cached_support_greeting_segments_hi = json.dumps(
-        {"call_id": "", "segments": segs_sup_hi_json, "hangup": False}
-    )
+    # print("PRELOAD: Preloading Hindi support greeting...")
+    # segs_sup_hi = speak_segments(SUPPORT_GREETING_HI, "hi", prefix="support_greeting_hi")
+    # segs_sup_hi_json = []
+    # for text, seg_path in segs_sup_hi:
+    #     ulaw_bytes = _audio_to_ulaw(seg_path)
+    #     os.remove(seg_path)
+    #     segs_sup_hi_json.append({
+    #         "text": text,
+    #         "audio": base64.b64encode(ulaw_bytes).decode(),
+    #     })
+    # _cached_support_greeting_segments_hi = json.dumps(
+    #     {"call_id": "", "segments": segs_sup_hi_json, "hangup": False}
+    # )
 
     print("PRELOAD: All greetings cached.")
 
@@ -298,12 +298,8 @@ async def voice_audio_segmented(
         )
 
     if inbound and audio is None:
-        greeting_lang = lang if lang in ("hi", "en") else "en"
-        greeting_text = SUPPORT_GREETING_HI if greeting_lang == "hi" else SUPPORT_GREETING
-        add_message(call_id, "assistant", greeting_text)
-        cached = (_cached_support_greeting_segments_hi if greeting_lang == "hi"
-                  else _cached_support_greeting_segments)
-        data = json.loads(cached)
+        add_message(call_id, "assistant", SUPPORT_GREETING)
+        data = json.loads(_cached_support_greeting_segments)
         data["call_id"] = call_id
         return Response(
             content=json.dumps(data),

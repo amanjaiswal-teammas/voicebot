@@ -242,7 +242,7 @@ try:
     inbound = call_type == "inbound"
     log(f"CALL_ID={call_id} TYPE={'inbound' if inbound else 'outbound'}")
 
-    greeting_lang = "hi" if inbound else "en"
+    greeting_lang = "en"
     log(f"GREETING LANG: {greeting_lang}")
 
     log("REQUESTING SEGMENTED GREETING")
