@@ -12,11 +12,12 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
 
-from .session import create_session
+from .session import create_session, start_conversation, end_conversation
 from .conversation import process_call, process_support_call
 from .memory import add_message
 from .supertonic_engine import speak_segments, speak
-from .config import MAX_CONCURRENT_CALLS
+from .config import MAX_CONCURRENT_CALLS, SAVE_CALLER_AUDIO
+from . import db
 
 AUDIO_DIR = "audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
@@ -190,6 +191,9 @@ def _build_api_response(result: dict, call_id: str) -> Response:
     lang = result.get("lang", "en")
     pre_segments = result.get("segments", [])
 
+    if hangup:
+        end_conversation(call_id, status="hangup")
+
     if not bot_text or not bot_text.strip():
         if hangup:
             return Response(
@@ -255,11 +259,20 @@ async def _process_plain(process_fn, call_id, audio_path):
         )
 
 
+async def _save_caller_audio(call_id: str, raw: bytes):
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, db.save_caller_audio, call_id, raw)
+    except Exception as e:
+        print(f"SAVE CALLER AUDIO ERROR: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _preload_greeting)
     await loop.run_in_executor(None, _warmup_ollama)
+    await loop.run_in_executor(None, db.init_db)
 
     async def _cleanup_loop():
         while True:
@@ -312,6 +325,7 @@ async def voice_audio_segmented(
     if outbound:
         greeting_lang = lang if lang in ("hi", "en") else "en"
         greeting_text = GREETING_TEXT_HI if greeting_lang == "hi" else GREETING_TEXT
+        start_conversation(call_id, agent_type="sales", direction="outbound", lang=greeting_lang)
         add_message(call_id, "assistant", greeting_text)
         cached = _cached_greeting_segments_hi if greeting_lang == "hi" else _cached_greeting_segments
         data = json.loads(cached)
@@ -322,6 +336,7 @@ async def voice_audio_segmented(
         )
 
     if inbound and audio is None:
+        start_conversation(call_id, agent_type="support", direction="inbound", lang="en")
         add_message(call_id, "assistant", SUPPORT_GREETING)
         data = json.loads(_cached_support_greeting_segments)
         data["call_id"] = call_id
@@ -332,6 +347,12 @@ async def voice_audio_segmented(
 
     # Select conversation flow
     _process = process_support_call if inbound else process_call
+    start_conversation(
+        call_id,
+        agent_type="support" if inbound else "sales",
+        direction="inbound" if inbound else "outbound",
+        lang=None,
+    )
 
     if audio is None:
         raise HTTPException(status_code=400, detail="Audio file missing")
@@ -344,6 +365,8 @@ async def voice_audio_segmented(
             return await _process_segmented(_process, call_id, None, interrupted_text)
         with open(temp_file, "wb") as f:
             f.write(raw)
+        if SAVE_CALLER_AUDIO:
+            await _save_caller_audio(call_id, raw)
     except Exception as e:
         print(f"SEG AUDIO WRITE ERROR: {e}")
         return await _process_segmented(_process, call_id, None, interrupted_text)
@@ -390,6 +413,7 @@ async def voice_audio(
         call_id = create_session()
 
     if outbound:
+        start_conversation(call_id, agent_type="sales", direction="outbound", lang="en")
         add_message(call_id, "assistant", GREETING_TEXT)
         return Response(
             content=_cached_greeting_ulaw,
@@ -426,6 +450,7 @@ async def voice_audio(
         os.remove(temp_file)
 
     if result.get("hangup"):
+        end_conversation(call_id, status="hangup")
         out_path = result.get("audio")
         if out_path and os.path.exists(out_path):
             ulaw_bytes = _audio_to_ulaw(out_path)
@@ -445,3 +470,15 @@ async def voice_audio(
         content=_cached_greeting_ulaw,
         media_type="audio/x-mulaw",
     )
+
+
+@app.get("/agents")
+def get_agents():
+    from .agents import list_agents
+    return {"agents": list_agents()}
+
+
+@app.get("/conversations")
+def get_conversations(limit: int = 50):
+    return {"conversations": db.list_conversations(limit)}
+

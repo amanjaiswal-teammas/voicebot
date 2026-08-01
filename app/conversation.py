@@ -22,6 +22,7 @@ from .language import detect_language, detect_language_switch
 from .memory import get_history, add_message
 from .session import get_or_create_session
 from .session_store import sessions
+from . import db
 from .patterns import (
     SUPERTONIC_LANGS, KNOWN_WORDS, MALE_TO_FEMALE,
     PITCH_HI, PITCH_EN, ORDER_COLLECT_HI, ORDER_COLLECT_EN,
@@ -206,10 +207,12 @@ def _handle_rejection(call_id, caller_text, session, lang):
     no_count = session["no_count"]
 
     print(f"REJECTION #{no_count}: {caller_text}")
+    db.log_event(call_id, "rejection", f"{no_count}: {caller_text[:120]}")
 
     if no_count >= 2:
         full_answer = GOODBYE_HI if lang == "hi" else GOODBYE_EN
         print(f"FORCED GOODBYE (rejection #{no_count}): {full_answer}")
+        db.log_event(call_id, "goodbye", f"double rejection: {caller_text[:120]}")
         add_message(call_id, "assistant", full_answer)
         session["no_count"] = 0
         session["awaiting_reason"] = False
@@ -225,6 +228,7 @@ def _handle_rejection(call_id, caller_text, session, lang):
 def _handle_lang_switch(call_id, caller_text, session, lang):
     full_answer = PITCH_HI if lang == "hi" else PITCH_EN
     print(f"LANG SWITCH → {lang} — BYPASSING LLM, PITCH: {full_answer}")
+    db.log_event(call_id, "lang_switch", lang)
     add_message(call_id, "assistant", full_answer)
     return _respond(call_id, caller_text, full_answer, lang)
 
@@ -288,6 +292,7 @@ def _handle_order_collecting(call_id, caller_text, session, lang):
         session.pop("order_details", None)
         session.pop("order_turns", None)
         print("ORDER COLLECTING — max turns reached, giving up")
+        db.log_event(call_id, "order_giveup", f"turns={order_turns}")
         return None  # fall through to LLM
 
     existing = session.get("order_details", {})
@@ -299,6 +304,10 @@ def _handle_order_collecting(call_id, caller_text, session, lang):
     if not order_needs_more(details):
         full_answer = build_order_confirmation(lang, details)
         print(f"ORDER COMPLETE — confirming: {full_answer}")
+        db.insert_order(call_id, details, raw_text=caller_text)
+        db.log_event(call_id, "order_confirmed", ", ".join(
+            f"{k}={v}" for k, v in details.items() if v
+        ))
         add_message(call_id, "assistant", full_answer)
         session["order_collecting"] = False
         session.pop("order_details", None)
@@ -314,6 +323,7 @@ def _handle_order_collecting(call_id, caller_text, session, lang):
 def _handle_garbled(call_id, caller_text, session, lang):
     full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
     print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
+    db.log_event(call_id, "garbled", caller_text[:120])
     add_message(call_id, "assistant", full_answer)
     return _respond(call_id, caller_text, full_answer, lang)
 
@@ -374,6 +384,8 @@ def _handle_llm(call_id, caller_text, session, lang):
 
     if not hangup:
         hangup = _detect_goodbye(caller_text, full_answer)
+        if hangup:
+            db.log_event(call_id, "goodbye", caller_text[:120])
 
     output_file = f"audio/{call_id}.wav"
 
@@ -617,6 +629,8 @@ def _handle_support_llm(call_id, caller_text, session, lang):
 
     if not hangup:
         hangup = _detect_goodbye(caller_text, full_answer)
+        if hangup:
+            db.log_event(call_id, "goodbye", caller_text[:120])
 
     output_file = f"audio/{call_id}_support.wav"
 
@@ -736,6 +750,7 @@ def _handle_silent(call_id, interrupted_text, lang):
 
     if retries >= 3:
         print(f"SILENT RETRY {retries} — HANGING UP")
+        db.log_event(call_id, "silent_hangup", f"retries={retries}")
         return {
             "call_id": call_id, "caller": "", "bot": "",
             "audio": None, "segments": [], "hangup": True, "lang": lang,
