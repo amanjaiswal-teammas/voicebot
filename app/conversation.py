@@ -20,6 +20,7 @@ from .llm import ask_llm_stream
 from .supertonic_engine import speak, split_into_segments
 from .language import detect_language, detect_language_switch
 from .memory import get_history, add_message
+from .session import get_or_create_session
 from .session_store import sessions
 from .patterns import (
     SUPERTONIC_LANGS, KNOWN_WORDS, MALE_TO_FEMALE,
@@ -449,10 +450,7 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
 
     start_total = time.time()
 
-    if call_id not in sessions:
-        sessions[call_id] = {}
-
-    session = sessions[call_id]
+    session = get_or_create_session(call_id)
     prev_lang = session.get("last_lang")
 
     # ------------------------------------------------------------------
@@ -667,10 +665,7 @@ def process_support_call(call_id, audio_file, interrupted_text=None):
 
     start_total = time.time()
 
-    if call_id not in sessions:
-        sessions[call_id] = {}
-
-    session = sessions[call_id]
+    session = get_or_create_session(call_id)
     prev_lang = session.get("last_lang")
 
     # STT + language detection

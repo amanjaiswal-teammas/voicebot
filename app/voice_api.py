@@ -16,6 +16,7 @@ from .session import create_session
 from .conversation import process_call, process_support_call
 from .memory import add_message
 from .supertonic_engine import speak_segments, speak
+from .config import MAX_CONCURRENT_CALLS
 
 AUDIO_DIR = "audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
@@ -231,6 +232,29 @@ def _build_api_response(result: dict, call_id: str) -> Response:
     return Response(content=json.dumps(resp), media_type="application/json")
 
 
+_PROCESS_SEMAPHORE = asyncio.Semaphore(max(1, MAX_CONCURRENT_CALLS))
+
+
+async def _process_segmented(process_fn, call_id, audio_path, interrupted_text=None):
+    """Run STT/LLM/TTS + response building off the event loop, bounded."""
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        result = process_fn(call_id, audio_path, interrupted_text=interrupted_text)
+        return _build_api_response(result, call_id)
+
+    async with _PROCESS_SEMAPHORE:
+        return await loop.run_in_executor(None, _run)
+
+
+async def _process_plain(process_fn, call_id, audio_path):
+    loop = asyncio.get_running_loop()
+    async with _PROCESS_SEMAPHORE:
+        return await loop.run_in_executor(
+            None, lambda: process_fn(call_id, audio_path, None)
+        )
+
+
 @app.on_event("startup")
 async def startup():
     loop = asyncio.get_event_loop()
@@ -317,14 +341,12 @@ async def voice_audio_segmented(
         raw = await audio.read()
         if not raw or len(raw) < 44:
             print(f"SEG AUDIO: empty or too small ({len(raw)} bytes) — treating as silent")
-            result = _process(call_id, None, interrupted_text=interrupted_text)
-            return _build_api_response(result, call_id)
+            return await _process_segmented(_process, call_id, None, interrupted_text)
         with open(temp_file, "wb") as f:
             f.write(raw)
     except Exception as e:
         print(f"SEG AUDIO WRITE ERROR: {e}")
-        result = _process(call_id, None, interrupted_text=interrupted_text)
-        return _build_api_response(result, call_id)
+        return await _process_segmented(_process, call_id, None, interrupted_text)
 
     try:
         diag_data, diag_sr = sf.read(temp_file)
@@ -337,7 +359,7 @@ async def voice_audio_segmented(
         diag_data = None
 
     if diag_data is None or len(diag_data) == 0:
-        result = _process(call_id, None, interrupted_text=interrupted_text)
+        result = await _process_segmented(_process, call_id, None, interrupted_text)
     else:
         active_thresh = max(0.005, np.std(diag_data) * 1.5)
         active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > active_thresh))
@@ -346,16 +368,16 @@ async def voice_audio_segmented(
         treat_silent = rms < 0.005 or active_ms < min_active
         print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
         if treat_silent:
-            result = _process(call_id, None, interrupted_text=interrupted_text)
+            result = await _process_segmented(_process, call_id, None, interrupted_text)
         else:
             trimmed = _trim_silence(temp_file, threshold=0.01, padding=0.15)
-            result = _process(call_id, trimmed, interrupted_text=interrupted_text)
+            result = await _process_segmented(_process, call_id, trimmed, interrupted_text)
             if trimmed != temp_file and os.path.exists(trimmed):
                 os.remove(trimmed)
     if os.path.exists(temp_file):
         os.remove(temp_file)
 
-    return _build_api_response(result, call_id)
+    return result
 
 
 @app.post("/voice-audio")
@@ -394,10 +416,10 @@ async def voice_audio(
         diag_data = None
 
     if diag_data is None or len(diag_data) == 0:
-        result = process_call(call_id, None)
+        result = await _process_plain(process_call, call_id, None)
     else:
         trimmed = _trim_silence(temp_file)
-        result = process_call(call_id, trimmed)
+        result = await _process_plain(process_call, call_id, trimmed)
         if trimmed != temp_file and os.path.exists(trimmed):
             os.remove(trimmed)
     if os.path.exists(temp_file):
