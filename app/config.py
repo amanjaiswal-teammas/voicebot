@@ -19,7 +19,7 @@ OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "1h")
 
 # Max simultaneous STT/LLM/TTS jobs. Whisper + Supertonic share one GPU, so
 # keep this small; set to 1 if the local TTS/STT models are not thread-safe.
-MAX_CONCURRENT_CALLS = int(os.environ.get("MAX_CONCURRENT_CALLS", "2"))
+MAX_CONCURRENT_CALLS = int(os.environ.get("MAX_CONCURRENT_CALLS", "1"))
 
 # --- MySQL storage (agents, conversations, messages, orders, events) -------
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "192.168.11.244")

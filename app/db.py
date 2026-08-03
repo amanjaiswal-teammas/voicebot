@@ -333,7 +333,7 @@ def insert_order(call_id, details, raw_text=None):
 def log_event(call_id, event, detail=None):
     if not _available or not call_id:
         return
-    defer(_log_event, call_id, event, detail)
+    defer(lambda: _log_event(call_id, event, detail))
 
 
 def _log_event(call_id, event, detail):

@@ -280,22 +280,81 @@ def is_audio_empty(path):
         return True
 
 
+def wav_rms(path):
+    try:
+        with wavemod.open(path, "rb") as w:
+            frames = w.readframes(w.getnframes())
+        if not frames:
+            return 0.0
+        samples = []
+        for i in range(0, len(frames), 2):
+            samples.append(int.from_bytes(frames[i:i + 2], "little", signed=True))
+        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+        return rms / 32768.0
+    except Exception:
+        return 0.0
+
+
+SILENCE_RMS = 0.005
+
+
 def record_caller(call_id, bargein_check_path=None):
     rec_file = f"{RECORD_DIR}/{call_id}_caller"
-    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 2500 s=1200')
-    log(f"RECORD RESULT={result}")
+    chunk_ms = 500
+    max_chunks = 5
+    min_chunks = 3
+    quiet_streak_max = 2
 
-    if "result=-1" in result:
-        log("CALL HUNG UP DURING RECORD")
-        return None
+    chunk_paths = []
+    quiet_streak = 0
+    any_speech = False
 
-    rec_path = f"{rec_file}.wav"
-    if not os.path.exists(rec_path) or os.path.getsize(rec_path) < 100:
-        log("RECORD FILE MISSING OR EMPTY")
+    for i in range(max_chunks):
+        part = f"{rec_file}_p{i}"
+        result = agi_cmd(f'RECORD FILE {part} wav "#" {chunk_ms}')
+        log(f"RECORD CHUNK {i} RESULT={result}")
+
+        if "result=-1" in result:
+            log("CALL HUNG UP DURING RECORD")
+            break
+
+        p = f"{part}.wav"
+        if not os.path.exists(p) or os.path.getsize(p) < 100:
+            log(f"RECORD CHUNK {i} MISSING OR EMPTY")
+            break
+
+        chunk_paths.append(p)
+        rms = wav_rms(p)
+        log(f"RECORD CHUNK {i}: rms={rms:.4f}")
+
+        if rms > SILENCE_RMS:
+            any_speech = True
+            quiet_streak = 0
+        else:
+            quiet_streak += 1
+
+        if "dtmf" in result.lower() or "(" in result:
+            log(f"RECORD CHUNK {i} ENDED BY DIGIT")
+            break
+
+        if quiet_streak >= quiet_streak_max and (any_speech or i + 1 >= min_chunks):
+            log(f"RECORD CHUNK {i}: silence detected, stopping")
+            break
+
+    if not chunk_paths:
+        log("NO RECORD CHUNKS")
         if bargein_check_path and os.path.exists(bargein_check_path):
             log("FALLING BACK to barge-in check file as main recording")
             return bargein_check_path
         return None
+
+    rec_path = f"{rec_file}.wav"
+    concat_wavs(chunk_paths, rec_path)
+    for p in chunk_paths:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
 
     try:
         with wavemod.open(rec_path, "rb") as w:
@@ -303,8 +362,11 @@ def record_caller(call_id, bargein_check_path=None):
     except Exception:
         pass
 
+    if not any_speech:
+        log("MAIN RECORDING SILENT")
+
     if bargein_check_path and os.path.exists(bargein_check_path):
-        if is_audio_empty(rec_path):
+        if not any_speech:
             log("MAIN RECORDING EMPTY, using check file alone")
             os.remove(rec_path)
             return bargein_check_path
