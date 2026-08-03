@@ -333,7 +333,7 @@ def record_caller(call_id, bargein_check_path=None):
         else:
             quiet_streak += 1
 
-        if "dtmf" in result.lower() or "(" in result:
+        if "dtmf" in result.lower():
             log(f"RECORD CHUNK {i} ENDED BY DIGIT")
             break
 
