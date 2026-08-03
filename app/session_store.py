@@ -56,14 +56,20 @@ def start_conversation(call_id, agent_type="sales", direction="outbound", lang="
         session.setdefault("_conv_id", None)
         session["_last_active"] = now
     if db.available() and not session["_conv_id"]:
-        try:
-            session["_conv_id"] = db.start_conversation(
-                call_id, agent_type, direction, lang
-            )
-        except Exception as e:
-            print(f"SESSION: start_conversation error {e}")
-            session["_conv_id"] = None
+        db.defer(lambda cid=call_id, a=agent_type, d=direction, l=lang:
+                 _persist_start(cid, a, d, l))
     return session
+
+
+def _persist_start(call_id, agent_type, direction, lang):
+    try:
+        conv_id = db.start_conversation(call_id, agent_type, direction, lang)
+        with sessions_lock:
+            s = sessions.get(call_id)
+            if s is not None and s.get("_conv_id") is None:
+                s["_conv_id"] = conv_id
+    except Exception as e:
+        print(f"SESSION: start_conversation error {e}")
 
 
 def get_or_create_session(call_id, agent_type=None, direction=None, lang=None):

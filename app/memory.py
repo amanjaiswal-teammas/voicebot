@@ -27,8 +27,13 @@ def add_message(call_id, role, content):
         session["messages"] = session["messages"][-20:]
 
     if db.available():
-        try:
-            db.insert_message(call_id, role, content)
-            flush_session(call_id)
-        except Exception as e:
-            print(f"MEMORY: persist error {e}")
+        db.defer(lambda cid=call_id, r=role, c=content:
+                 _persist_message(cid, r, c))
+
+
+def _persist_message(call_id, role, content):
+    try:
+        db.insert_message(call_id, role, content)
+        flush_session(call_id)
+    except Exception as e:
+        print(f"MEMORY: persist error {e}")

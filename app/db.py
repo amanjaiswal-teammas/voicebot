@@ -2,6 +2,7 @@ import os
 import queue
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -18,6 +19,20 @@ _lock = threading.RLock()
 _pool = None
 _available = False
 _init_done = False
+
+_db_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db-persist")
+
+
+def defer(fn):
+    """Run a DB write off the request thread.
+
+    A single worker preserves submission order, so the conversation row is
+    created before any message/state writes for the same call.
+    """
+    try:
+        _db_executor.submit(fn)
+    except Exception as e:
+        print(f"DB: defer error {e}")
 
 
 def available():
