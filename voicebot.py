@@ -195,7 +195,7 @@ def is_audio_empty(path):
 
 def record_caller(call_id, bargein_check_path=None):
     rec_file = f"{RECORD_DIR}/{call_id}_caller"
-    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 3000 s=800')
+    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 3000')
     log(f"RECORD RESULT={result}")
 
     if "result=-1" in result:
