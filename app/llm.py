@@ -1,6 +1,7 @@
 import requests
 import re
 import json
+import time
 
 from .config import OLLAMA_HOST, MODEL_NAME, OLLAMA_KEEP_ALIVE
 
@@ -105,6 +106,9 @@ def ask_llm_stream(messages, lang="en", mode="sales"):
     buffer = ""
     in_think = False
     completed = []
+    t0 = time.time()
+    t_first_token = None
+    metrics = {}
 
     def _flush():
         nonlocal buffer
@@ -125,10 +129,16 @@ def ask_llm_stream(messages, lang="en", mode="sales"):
         except Exception:
             continue
         if data.get("done"):
+            for k in ("total_duration", "load_duration", "prompt_eval_count",
+                      "prompt_eval_duration", "eval_count", "eval_duration"):
+                if k in data:
+                    metrics[k] = data[k]
             break
         token = data.get("message", {}).get("content", "")
         if not token:
             continue
+        if t_first_token is None:
+            t_first_token = time.time()
         if "<think>" in token:
             in_think = True
             before, _, after = token.partition("<think>")
@@ -153,6 +163,14 @@ def ask_llm_stream(messages, lang="en", mode="sales"):
     full_answer = " ".join(completed).strip()
     hangup = "[HANGUP]" in full_answer
     full_answer = full_answer.replace("[HANGUP]", "").strip()
+    t1 = time.time()
+    ttfb = (t_first_token - t0) if t_first_token else None
+    m = {k: v for k, v in metrics.items()}
+    for k in ("total_duration", "load_duration", "prompt_eval_duration", "eval_duration"):
+        if k in m:
+            m[k] = round(m[k] / 1e9, 3)
+    print(f"LLM TIMING: total={t1 - t0:.3f}s ttfb={ttfb:.3f}s "
+          f"tokens={len(full_answer)} chars metrics={m}")
     print(f"LLM RAW: {full_answer}")
     if full_answer:
         yield (full_answer, True, hangup)
