@@ -5,6 +5,7 @@ import wave
 import base64
 import audioop
 import asyncio
+import time
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
@@ -325,8 +326,12 @@ async def voice_audio_segmented(
     if outbound:
         greeting_lang = lang if lang in ("hi", "en") else "en"
         greeting_text = GREETING_TEXT_HI if greeting_lang == "hi" else GREETING_TEXT
+        t0 = time.monotonic()
         start_conversation(call_id, agent_type="sales", direction="outbound", lang=greeting_lang)
+        t1 = time.monotonic()
         add_message(call_id, "assistant", greeting_text)
+        t2 = time.monotonic()
+        print(f"GREETING (outbound): start_conv={t1-t0:.3f}s add_msg={t2-t1:.3f}s")
         cached = _cached_greeting_segments_hi if greeting_lang == "hi" else _cached_greeting_segments
         data = json.loads(cached)
         data["call_id"] = call_id
@@ -336,8 +341,12 @@ async def voice_audio_segmented(
         )
 
     if inbound and audio is None:
+        t0 = time.monotonic()
         start_conversation(call_id, agent_type="support", direction="inbound", lang="en")
+        t1 = time.monotonic()
         add_message(call_id, "assistant", SUPPORT_GREETING)
+        t2 = time.monotonic()
+        print(f"GREETING (inbound): start_conv={t1-t0:.3f}s add_msg={t2-t1:.3f}s")
         data = json.loads(_cached_support_greeting_segments)
         data["call_id"] = call_id
         return Response(
