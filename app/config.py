@@ -8,6 +8,9 @@ except Exception:
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MODEL_NAME = os.environ.get("MODEL_NAME", "qwen2.5:7b")
+# Keep the LLM loaded in VRAM between calls. Ollama's default is 5 minutes,
+# so without this every call pays a ~4s model reload.
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "1h")
 
 # To enable flash attention, run on server before starting Ollama:
 #   export OLLAMA_FLASH_ATTENTION=1

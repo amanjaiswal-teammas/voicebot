@@ -2,7 +2,7 @@ import requests
 import re
 import json
 
-from .config import OLLAMA_HOST, MODEL_NAME
+from .config import OLLAMA_HOST, MODEL_NAME, OLLAMA_KEEP_ALIVE
 
 _SENTENCE_END = re.compile(r'(?<=[.!?।])\s+')
 
@@ -25,6 +25,7 @@ def ask_llm(messages, lang="en", mode="sales"):
             }
         ] + messages,
         "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {
             "temperature": 0.2,
             "num_predict": 100,
@@ -87,6 +88,7 @@ def ask_llm_stream(messages, lang="en", mode="sales"):
         "model": MODEL_NAME,
         "messages": [{"role": "system", "content": system_content}] + messages,
         "stream": True,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
         "options": {
             "temperature": 0.2, "num_predict": 100, "num_ctx": 1536,
             "repeat_penalty": 1.0, "top_p": 0.8, "top_k": 20,

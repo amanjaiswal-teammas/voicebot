@@ -173,11 +173,12 @@ def _preload_greeting():
 
 def _warmup_ollama():
     import requests
-    from .config import OLLAMA_HOST, MODEL_NAME
+    from .config import OLLAMA_HOST, MODEL_NAME, OLLAMA_KEEP_ALIVE
     try:
         requests.post(
             f"{OLLAMA_HOST}/api/chat",
             json={"model": MODEL_NAME, "messages": [{"role": "user", "content": "hi"}], "stream": False,
+                  "keep_alive": OLLAMA_KEEP_ALIVE,
                   "options": {"num_predict": 1, "num_ctx": 1536}},
             timeout=60,
         )
