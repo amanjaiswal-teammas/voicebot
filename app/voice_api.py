@@ -6,12 +6,14 @@ import base64
 import audioop
 import asyncio
 import time
+import queue
+import threading
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from .session import create_session, start_conversation, end_conversation
 from .conversation import process_call, process_support_call
@@ -187,6 +189,14 @@ def _warmup_ollama():
         print(f"WARMUP FAILED: {e}")
 
 
+def _prewarm_prompts():
+    from .agents import get_system_prompt
+    for agent_type in ("sales", "support"):
+        for lang in ("en", "hi"):
+            get_system_prompt(agent_type, lang)
+    print("PREWARM: system prompts cached.")
+
+
 def _build_api_response(result: dict, call_id: str) -> Response:
     bot_text = result.get("bot", "")
     hangup = result.get("hangup", False)
@@ -275,6 +285,7 @@ async def startup():
     await loop.run_in_executor(None, _preload_greeting)
     await loop.run_in_executor(None, _warmup_ollama)
     await loop.run_in_executor(None, db.init_db)
+    await loop.run_in_executor(None, _prewarm_prompts)
 
     async def _cleanup_loop():
         while True:
@@ -411,6 +422,128 @@ async def voice_audio_segmented(
         os.remove(temp_file)
 
     return result
+
+
+@app.post("/voice-audio-stream")
+async def voice_audio_stream(
+    audio: Optional[UploadFile] = File(None),
+    call_id: str = Form(None),
+    inbound: bool = Form(False),
+    interrupted_text: Optional[str] = Form(None),
+):
+    """Turn-processing endpoint that streams each TTS'd segment as NDJSON.
+
+    Each line: {"segments":[{"text","audio"(ulaw b64)}]}
+    Final line: {"segments":[], "done":true, "hangup":bool}
+    """
+    if not call_id:
+        call_id = create_session()
+
+    print(f"STREAM-API: call_id={call_id} inbound={inbound} interrupted_text='{interrupted_text}'")
+
+    _process = process_support_call if inbound else process_call
+    start_conversation(
+        call_id,
+        agent_type="support" if inbound else "sales",
+        direction="inbound" if inbound else "outbound",
+        lang=None,
+    )
+
+    audio_path = None
+    temp_file = f"{AUDIO_DIR}/{call_id}_in.wav"
+    if audio is not None:
+        try:
+            raw = await audio.read()
+            if raw and len(raw) >= 44:
+                with open(temp_file, "wb") as f:
+                    f.write(raw)
+                if SAVE_CALLER_AUDIO:
+                    await _save_caller_audio(call_id, raw)
+        except Exception as e:
+            print(f"STREAM AUDIO WRITE ERROR: {e}")
+
+        if os.path.exists(temp_file):
+            try:
+                diag_data, diag_sr = sf.read(temp_file)
+            except Exception:
+                diag_data = None
+            if diag_data is None or len(diag_data) == 0:
+                audio_path = None
+            else:
+                rms = float(np.sqrt(np.mean(diag_data ** 2)))
+                print(f"STREAM AUDIO DIAG: sr={diag_sr} len={len(diag_data)} rms={rms:.5f}")
+                active_thresh = max(0.005, np.std(diag_data) * 1.5)
+                arr = diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)
+                active = int(np.sum(np.abs(arr) > active_thresh))
+                active_ms = active / max(diag_sr, 1) * 1000
+                min_active = 50 if interrupted_text else 120
+                treat_silent = rms < 0.005 or active_ms < min_active
+                print(f"STREAM NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
+                if not treat_silent:
+                    audio_path = _trim_silence(temp_file, threshold=0.01, padding=0.15)
+            if temp_file != audio_path and os.path.exists(temp_file):
+                os.remove(temp_file)
+
+    def _run():
+        q = queue.Queue()
+
+        def _publish(text, path, lang):
+            if path and os.path.exists(path):
+                try:
+                    ulaw_bytes = _audio_to_ulaw(path)
+                    os.remove(path)
+                    q.put({"segments": [{
+                        "text": text,
+                        "audio": base64.b64encode(ulaw_bytes).decode(),
+                    }]})
+                    print(f"STREAM SEG: {text[:60]}")
+                except Exception as e:
+                    print(f"STREAM PUBLISH ERROR: {e}")
+
+        def _finish(hangup):
+            q.put({"segments": [], "done": True, "hangup": bool(hangup)})
+
+        try:
+            result = _process(
+                call_id,
+                audio_path,
+                interrupted_text=interrupted_text,
+                on_segment=_publish,
+            )
+            hangup = bool(result.get("hangup", False))
+            if hangup:
+                try:
+                    end_conversation(call_id, status="hangup")
+                except Exception as e:
+                    print(f"STREAM END CONV ERROR: {e}")
+            for text, path in result.get("segments", []):
+                if path and os.path.exists(path):
+                    _publish(text, path, result.get("lang", "en"))
+            _finish(hangup)
+        except Exception as e:
+            print(f"STREAM WORKER ERROR: {e}")
+            _finish(True)
+
+        def _gen():
+            try:
+                while True:
+                    try:
+                        item = q.get(timeout=120)
+                    except queue.Empty:
+                        break
+                    yield json.dumps(item) + "\n"
+                    if item.get("done"):
+                        break
+            finally:
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        os.remove(audio_path)
+                    except Exception:
+                        pass
+
+        return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
+    return _run()
 
 
 @app.post("/voice-audio")

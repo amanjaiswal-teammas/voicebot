@@ -159,6 +159,7 @@ def _respond(
     lang: str,
     hangup: bool = False,
     segments=None,
+    on_segment=None,
 ):
     """Synthesize *full_answer* to audio, build standard return dict."""
     if segments is None:
@@ -183,6 +184,13 @@ def _respond(
             }
         segments = [(full_answer, output_file)]
 
+    if on_segment is not None:
+        for text, path in segments:
+            try:
+                on_segment(text, path, tts_lang)
+            except Exception as e:
+                print(f"ON_SEGMENT ERROR: {e}")
+
     return {
         "call_id": call_id,
         "caller": caller_text,
@@ -198,7 +206,7 @@ def _respond(
 # Intent handlers
 # ============================================================================
 
-def _handle_rejection(call_id, caller_text, session, lang):
+def _handle_rejection(call_id, caller_text, session, lang, on_segment=None):
     session["no_count"] = session.get("no_count", 0) + 1
     session["awaiting_reason"] = False
     session["order_collecting"] = False
@@ -216,21 +224,21 @@ def _handle_rejection(call_id, caller_text, session, lang):
         add_message(call_id, "assistant", full_answer)
         session["no_count"] = 0
         session["awaiting_reason"] = False
-        return _respond(call_id, caller_text, full_answer, lang, hangup=True)
+        return _respond(call_id, caller_text, full_answer, lang, hangup=True, on_segment=on_segment)
 
     full_answer = ASK_REASON_HI if lang == "hi" else ASK_REASON_EN
     print(f"FORCED ASK REASON (rejection #{no_count}): {full_answer}")
     add_message(call_id, "assistant", full_answer)
     session["awaiting_reason"] = True
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
-def _handle_lang_switch(call_id, caller_text, session, lang):
+def _handle_lang_switch(call_id, caller_text, session, lang, on_segment=None):
     full_answer = PITCH_HI if lang == "hi" else PITCH_EN
     print(f"LANG SWITCH → {lang} — BYPASSING LLM, PITCH: {full_answer}")
     db.log_event(call_id, "lang_switch", lang)
     add_message(call_id, "assistant", full_answer)
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
 def _handle_awaiting_reason(call_id, caller_text, session, lang):
@@ -255,7 +263,7 @@ def _handle_awaiting_reason(call_id, caller_text, session, lang):
     return None
 
 
-def _handle_interest(call_id, caller_text, session, lang, explicit_request):
+def _handle_interest(call_id, caller_text, session, lang, explicit_request, on_segment=None):
     if explicit_request:
         full_answer = PITCH_HI if lang == "hi" else PITCH_EN
     elif _pitch_given(session):
@@ -269,10 +277,10 @@ def _handle_interest(call_id, caller_text, session, lang, explicit_request):
     add_message(call_id, "assistant", full_answer)
     if is_order_collect:
         session["order_collecting"] = True
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
-def _handle_order_intent(call_id, caller_text, session, lang):
+def _handle_order_intent(call_id, caller_text, session, lang, on_segment=None):
     if _pitch_given(session):
         full_answer = ORDER_COLLECT_HI if lang == "hi" else ORDER_COLLECT_EN
         print(f"ORDER INTENT — BYPASSING LLM, COLLECTING DETAILS: {full_answer}")
@@ -282,10 +290,10 @@ def _handle_order_intent(call_id, caller_text, session, lang):
         full_answer = PITCH_HI if lang == "hi" else PITCH_EN
         print(f"ORDER INTENT (no pitch yet) — PITCHING: {full_answer}")
         add_message(call_id, "assistant", full_answer)
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
-def _handle_order_collecting(call_id, caller_text, session, lang):
+def _handle_order_collecting(call_id, caller_text, session, lang, on_segment=None):
     order_turns = session.get("order_turns", 0)
     if order_turns >= ORDER_MAX_TURNS:
         session["order_collecting"] = False
@@ -312,27 +320,27 @@ def _handle_order_collecting(call_id, caller_text, session, lang):
         session["order_collecting"] = False
         session.pop("order_details", None)
         session.pop("order_turns", None)
-        return _respond(call_id, caller_text, full_answer, lang)
+        return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
     full_answer = build_order_response(lang, details)
     print(f"ORDER COLLECTING — asking for more: {full_answer}")
     add_message(call_id, "assistant", full_answer)
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
-def _handle_garbled(call_id, caller_text, session, lang):
+def _handle_garbled(call_id, caller_text, session, lang, on_segment=None):
     full_answer = ASK_REPEAT_HI if lang == "hi" else ASK_REPEAT_EN
     print(f"GARBLED TEXT — BYPASSING LLM, ASKING TO REPEAT: {full_answer}")
     db.log_event(call_id, "garbled", caller_text[:120])
     add_message(call_id, "assistant", full_answer)
-    return _respond(call_id, caller_text, full_answer, lang)
+    return _respond(call_id, caller_text, full_answer, lang, on_segment=on_segment)
 
 
 # ============================================================================
 # LLM streaming handler
 # ============================================================================
 
-def _handle_llm(call_id, caller_text, session, lang):
+def _handle_llm(call_id, caller_text, session, lang, on_segment=None):
     print("STEP 2: LLM (STREAMING)")
 
     history = get_history(call_id)[-6:]
@@ -362,6 +370,8 @@ def _handle_llm(call_id, caller_text, session, lang):
             try:
                 speak(processed, seg_path, tts_lang)
                 segments.append((processed, seg_path))
+                if on_segment is not None:
+                    on_segment(processed, seg_path, tts_lang)
                 print(f"TTS PRE-GEN: {seg_path}")
             except Exception as e:
                 print(f"TTS STREAM ERROR: {e}")
@@ -375,6 +385,8 @@ def _handle_llm(call_id, caller_text, session, lang):
         try:
             speak(pending_text, seg_path, tts_lang)
             segments.append((pending_text, seg_path))
+            if on_segment is not None:
+                on_segment(pending_text, seg_path, tts_lang)
         except Exception as e:
             print(f"TTS FINAL ERROR: {e}")
 
@@ -455,7 +467,7 @@ def _detect_goodbye(caller_text: str, bot_answer: str) -> bool:
 # Main entry point
 # ============================================================================
 
-def process_call(call_id: str, audio_file, interrupted_text=None):
+def process_call(call_id: str, audio_file, interrupted_text=None, on_segment=None):
 
     print("STEP 1: STT")
     print("INPUT AUDIO:", audio_file)
@@ -511,7 +523,7 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
     # Silent / empty audio handling
     # ------------------------------------------------------------------
     if not caller_text.strip():
-        return _handle_silent(call_id, interrupted_text, lang)
+        return _handle_silent(call_id, interrupted_text, lang, on_segment=on_segment)
 
     print("CALLER:", caller_text)
     session["silent_retries"] = 0
@@ -539,12 +551,12 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
     # Dispatch to handler
     # ------------------------------------------------------------------
     if intent == "rejection":
-        return _handle_rejection(call_id, caller_text, session, lang)
+        return _handle_rejection(call_id, caller_text, session, lang, on_segment=on_segment)
 
     session["no_count"] = 0  # clear on non-rejection
 
     if intent == "lang_switch":
-        return _handle_lang_switch(call_id, caller_text, session, lang)
+        return _handle_lang_switch(call_id, caller_text, session, lang, on_segment=on_segment)
 
     if intent == "awaiting_reason_response":
         result = _handle_awaiting_reason(call_id, caller_text, session, lang)
@@ -554,32 +566,33 @@ def process_call(call_id: str, audio_file, interrupted_text=None):
 
     if intent == "interest":
         return _handle_interest(
-            call_id, caller_text, session, lang, extras["explicit_request"]
+            call_id, caller_text, session, lang, extras["explicit_request"],
+            on_segment=on_segment,
         )
 
     if intent == "order_intent":
-        return _handle_order_intent(call_id, caller_text, session, lang)
+        return _handle_order_intent(call_id, caller_text, session, lang, on_segment=on_segment)
 
     if intent == "order_collecting":
-        result = _handle_order_collecting(call_id, caller_text, session, lang)
+        result = _handle_order_collecting(call_id, caller_text, session, lang, on_segment=on_segment)
         if result is not None:
             return result
         # max turns reached → fall through to LLM
 
     if intent == "garbled":
-        return _handle_garbled(call_id, caller_text, session, lang)
+        return _handle_garbled(call_id, caller_text, session, lang, on_segment=on_segment)
 
     # ------------------------------------------------------------------
     # LLM fallback
     # ------------------------------------------------------------------
-    return _handle_llm(call_id, caller_text, session, lang)
+    return _handle_llm(call_id, caller_text, session, lang, on_segment=on_segment)
 
 
 # ============================================================================
 # Support call flow (inbound customer complaints)
 # ============================================================================
 
-def _handle_support_llm(call_id, caller_text, session, lang):
+def _handle_support_llm(call_id, caller_text, session, lang, on_segment=None):
     print("STEP 2: SUPPORT LLM")
 
     history = get_history(call_id)[-6:]
@@ -608,6 +621,8 @@ def _handle_support_llm(call_id, caller_text, session, lang):
             try:
                 speak(processed, seg_path, tts_lang)
                 segments.append((processed, seg_path))
+                if on_segment is not None:
+                    on_segment(processed, seg_path, tts_lang)
             except Exception as e:
                 print(f"SUPPORT TTS STREAM ERROR: {e}")
 
@@ -620,6 +635,8 @@ def _handle_support_llm(call_id, caller_text, session, lang):
         try:
             speak(pending_text, seg_path, tts_lang)
             segments.append((pending_text, seg_path))
+            if on_segment is not None:
+                on_segment(pending_text, seg_path, tts_lang)
         except Exception as e:
             print(f"SUPPORT TTS FINAL ERROR: {e}")
 
@@ -671,7 +688,7 @@ def _handle_support_llm(call_id, caller_text, session, lang):
     }
 
 
-def process_support_call(call_id, audio_file, interrupted_text=None):
+def process_support_call(call_id, audio_file, interrupted_text=None, on_segment=None):
     """Handle an inbound support call — complaints, refunds, delivery issues."""
 
     print("SUPPORT CALL: STEP 1 STT")
@@ -718,7 +735,7 @@ def process_support_call(call_id, audio_file, interrupted_text=None):
 
     # Silent / empty
     if not caller_text.strip():
-        return _handle_silent(call_id, interrupted_text, lang)
+        return _handle_silent(call_id, interrupted_text, lang, on_segment=on_segment)
 
     print("CALLER:", caller_text)
     session["silent_retries"] = 0
@@ -734,10 +751,10 @@ def process_support_call(call_id, audio_file, interrupted_text=None):
         add_message(call_id, "system", context)
 
     add_message(call_id, "user", caller_text)
-    return _handle_support_llm(call_id, caller_text, session, lang)
+    return _handle_support_llm(call_id, caller_text, session, lang, on_segment=on_segment)
 
 
-def _handle_silent(call_id, interrupted_text, lang):
+def _handle_silent(call_id, interrupted_text, lang, on_segment=None):
     if interrupted_text:
         print("EMPTY BARGE-IN — skipping sorry, will re-listen")
         return {
@@ -764,6 +781,11 @@ def _handle_silent(call_id, interrupted_text, lang):
 
     output = f"audio/{call_id}_retry.wav"
     speak(msg, output, "hi" if silent_lang == "hi" else "en")
+    if on_segment is not None:
+        try:
+            on_segment(msg, output, "hi" if silent_lang == "hi" else "en")
+        except Exception as e:
+            print(f"ON_SEGMENT ERROR: {e}")
 
     return {
         "call_id": call_id, "caller": "", "bot": msg,

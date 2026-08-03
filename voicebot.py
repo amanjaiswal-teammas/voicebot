@@ -74,6 +74,93 @@ def get_segments(call_id, audio_path=None, interrupted_text=None, lang=None, inb
     return r.json()
 
 
+def get_segments_stream(call_id, audio_path, interrupted_text=None, inbound=False):
+    """POST the recording and get a streaming NDJSON response (one segment per line)."""
+    data = {
+        "call_id": call_id,
+        "interrupted_text": interrupted_text or "",
+    }
+    if inbound:
+        data["inbound"] = "true"
+    try:
+        with open(audio_path, "rb") as f:
+            r = requests.post(
+                f"{API_BASE}/voice-audio-stream",
+                files={"audio": f},
+                data=data,
+                stream=True,
+                timeout=120,
+            )
+    except requests.exceptions.ConnectionError as e:
+        log(f"STREAM API CONNECTION ERROR: {e}")
+        return None
+    if r.status_code != 200:
+        log(f"STREAM API ERROR: {r.status_code} {r.text}")
+        return None
+    return r
+
+
+def play_stream_response(resp, call_id):
+    """Play segments as they arrive over NDJSON.
+
+    Returns (status, interrupted_text, check_path) like play_segments.
+    """
+    last_text = None
+    played = 0
+    try:
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except Exception:
+                continue
+            segs = data.get("segments", [])
+            done = data.get("done", False)
+
+            for i, seg in enumerate(segs):
+                text = seg.get("text", "")
+                audio_b64 = seg.get("audio", "")
+                if not audio_b64:
+                    continue
+                seg_path = f"{PLAYBACK_DIR}/{call_id}_seg_{played}.ulaw"
+                with open(seg_path, "wb") as f:
+                    f.write(base64.b64decode(audio_b64))
+                result = agi_cmd(f'STREAM FILE voicebot/{call_id}_seg_{played} "#*0-9"')
+                try:
+                    os.remove(seg_path)
+                except Exception:
+                    pass
+                log(f"STREAM RESULT seg{played}={result}")
+                last_text = text
+                played += 1
+
+                if "result=-1" in result:
+                    return "hangup", None, None
+                if "digit=" in result:
+                    log(f"DTMF BARGE-IN on segment {played - 1}")
+                    return "bargein", text, None
+
+                is_last = done and i == len(segs) - 1
+                if not is_last:
+                    result_type, check_path = detect_voice_bargein(call_id)
+                    if result_type == "hangup":
+                        return "hangup", None, None
+                    if result_type == "bargein":
+                        log(f"VOICE BARGE-IN after segment {played - 1}")
+                        return "bargein", text, check_path
+
+            if done:
+                hangup = data.get("hangup", False)
+                if hangup:
+                    return "hangup", None, None
+                return "ok", last_text, None
+    except Exception as e:
+        log(f"STREAM PLAYBACK ERROR: {e}")
+        return "ok", last_text, None
+    return "ok", last_text, None
+
+
 def check_speech(audio_path):
     try:
         with open(audio_path, "rb") as f:
@@ -195,7 +282,7 @@ def is_audio_empty(path):
 
 def record_caller(call_id, bargein_check_path=None):
     rec_file = f"{RECORD_DIR}/{call_id}_caller"
-    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 3000')
+    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 3000 s=1200')
     log(f"RECORD RESULT={result}")
 
     if "result=-1" in result:
@@ -276,22 +363,26 @@ try:
             status = "bargein"
 
         if status == "bargein":
-            api_data = get_segments(
+            stream_resp = get_segments_stream(
                 call_id,
-                audio_path=rec_path,
+                rec_path,
                 interrupted_text=interrupted_text,
                 inbound=inbound,
             )
         else:
-            api_data = get_segments(call_id, audio_path=rec_path, inbound=inbound)
+            stream_resp = get_segments_stream(call_id, rec_path, inbound=inbound)
 
         os.remove(rec_path)
 
-        if api_data is None:
+        if stream_resp is None:
             log("API FAILED")
             break
 
-        status, interrupted_text, check_path = play_segments(api_data, call_id)
+        status, interrupted_text, check_path = play_stream_response(stream_resp, call_id)
+        try:
+            stream_resp.close()
+        except Exception:
+            pass
 
         if status == "hangup":
             log("HANGUP RECEIVED FROM API")
