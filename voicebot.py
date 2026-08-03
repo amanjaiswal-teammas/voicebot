@@ -217,7 +217,7 @@ def concat_wavs(paths, output_path):
 
 def detect_voice_bargein(call_id):
     check_file = f"{RECORD_DIR}/{call_id}_check"
-    result = agi_cmd(f'RECORD FILE {check_file} wav "" 400')
+    result = agi_cmd(f'RECORD FILE {check_file} wav "" 250')
     log(f"CHECK RECORD={result}")
 
     if "result=-1" in result:
@@ -300,9 +300,9 @@ SILENCE_RMS = 0.005
 
 def record_caller(call_id, bargein_check_path=None):
     rec_file = f"{RECORD_DIR}/{call_id}_caller"
-    chunk_ms = 500
-    max_chunks = 5
-    min_chunks = 3
+    chunk_ms = 300
+    max_chunks = 10
+    min_chunks = 6
     quiet_streak_max = 2
 
     chunk_paths = []

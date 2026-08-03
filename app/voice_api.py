@@ -405,10 +405,10 @@ async def voice_audio_segmented(
     if diag_data is None or len(diag_data) == 0:
         result = await _process_segmented(_process, call_id, None, interrupted_text)
     else:
-        active_thresh = max(0.005, np.std(diag_data) * 1.5)
+        active_thresh = max(0.005, np.std(diag_data))
         active = int(np.sum(np.abs(diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)) > active_thresh))
         active_ms = active / max(diag_sr, 1) * 1000
-        min_active = 50 if interrupted_text else 120
+        min_active = 40
         treat_silent = rms < 0.005 or active_ms < min_active
         print(f"SEG NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
         if treat_silent:
@@ -472,11 +472,11 @@ async def voice_audio_stream(
             else:
                 rms = float(np.sqrt(np.mean(diag_data ** 2)))
                 print(f"STREAM AUDIO DIAG: sr={diag_sr} len={len(diag_data)} rms={rms:.5f}")
-                active_thresh = max(0.005, np.std(diag_data) * 1.5)
+                active_thresh = max(0.005, np.std(diag_data))
                 arr = diag_data if len(diag_data.shape) == 1 else diag_data.mean(axis=1)
                 active = int(np.sum(np.abs(arr) > active_thresh))
                 active_ms = active / max(diag_sr, 1) * 1000
-                min_active = 50 if interrupted_text else 120
+                min_active = 40
                 treat_silent = rms < 0.005 or active_ms < min_active
                 print(f"STREAM NOISE CHECK: rms={rms:.5f} active={active_ms:.0f}ms active_thresh={active_thresh:.4f} treat_silent={treat_silent}")
                 if not treat_silent:
