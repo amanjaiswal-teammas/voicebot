@@ -282,7 +282,7 @@ def is_audio_empty(path):
 
 def record_caller(call_id, bargein_check_path=None):
     rec_file = f"{RECORD_DIR}/{call_id}_caller"
-    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 3000 s=1200')
+    result = agi_cmd(f'RECORD FILE {rec_file} wav "#" 2500 s=1200')
     log(f"RECORD RESULT={result}")
 
     if "result=-1" in result:
@@ -296,6 +296,12 @@ def record_caller(call_id, bargein_check_path=None):
             log("FALLING BACK to barge-in check file as main recording")
             return bargein_check_path
         return None
+
+    try:
+        with wavemod.open(rec_path, "rb") as w:
+            log(f"RECORD DURATION: {w.getnframes()/w.getframerate():.2f}s")
+    except Exception:
+        pass
 
     if bargein_check_path and os.path.exists(bargein_check_path):
         if is_audio_empty(rec_path):

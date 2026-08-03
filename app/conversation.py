@@ -76,6 +76,10 @@ def _post_process(text: str, lang: str) -> str:
     return text.strip()
 
 
+def _is_speakable(text: str) -> bool:
+    return bool(re.search(r"[\w\u0900-\u097F]", text))
+
+
 # ============================================================================
 # Garbled detection
 # ============================================================================
@@ -361,6 +365,9 @@ def _handle_llm(call_id, caller_text, session, lang, on_segment=None):
             print(f"LLM DONE: {elapsed}ms answer_len={len(full_answer)}")
         else:
             processed = _post_process(sentence, lang)
+            if not _is_speakable(processed):
+                print(f"LLM SENTENCE ({elapsed}ms): SKIP non-verbal {processed[:60]!r}")
+                continue
             pending_text += (" " if pending_text else "") + processed
             print(f"LLM SENTENCE ({elapsed}ms): {processed[:60]}...")
 
@@ -415,6 +422,17 @@ def _handle_llm(call_id, caller_text, session, lang, on_segment=None):
     tts_lang = _get_tts_lang(lang, full_answer)
     tts_start = time.time()
     try:
+        if not _is_speakable(full_answer):
+            print("TTS SKIP: non-verbal full answer")
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": hangup,
+                "lang": lang,
+            }
         speak(full_answer, output_file, tts_lang)
     except Exception as e:
         print("TTS ERROR:", e)
@@ -613,6 +631,9 @@ def _handle_support_llm(call_id, caller_text, session, lang, on_segment=None):
             print(f"SUPPORT LLM DONE: {elapsed}ms answer_len={len(full_answer)}")
         else:
             processed = _post_process(sentence, lang)
+            if not _is_speakable(processed):
+                print(f"SUPPORT LLM SENTENCE ({elapsed}ms): SKIP non-verbal {processed[:60]!r}")
+                continue
             pending_text += (" " if pending_text else "") + processed
             print(f"SUPPORT LLM SENTENCE ({elapsed}ms): {processed[:60]}...")
 
@@ -664,6 +685,17 @@ def _handle_support_llm(call_id, caller_text, session, lang, on_segment=None):
 
     tts_lang = _get_tts_lang(lang, full_answer)
     try:
+        if not _is_speakable(full_answer):
+            print("SUPPORT TTS SKIP: non-verbal full answer")
+            return {
+                "call_id": call_id,
+                "caller": caller_text,
+                "bot": full_answer,
+                "audio": None,
+                "segments": [],
+                "hangup": hangup,
+                "lang": lang,
+            }
         speak(full_answer, output_file, tts_lang)
     except Exception as e:
         print("SUPPORT TTS ERROR:", e)
