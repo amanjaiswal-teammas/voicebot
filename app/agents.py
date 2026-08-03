@@ -1,3 +1,5 @@
+import time
+
 from . import db
 from .bellavita_prompt import (
     SYSTEM_PROMPT_BASE as SALES_BASE,
@@ -14,6 +16,9 @@ from .support_prompt import (
 
 SUPPORTED_TYPES = ("sales", "support")
 
+_SYSTEM_PROMPT_CACHE: dict = {}
+_SYSTEM_PROMPT_TTL = 300  # seconds
+
 
 def _builtin_system_prompt(agent_type, lang):
     if agent_type == "support":
@@ -29,10 +34,16 @@ def _builtin_system_prompt(agent_type, lang):
 def get_system_prompt(agent_type, lang):
     if agent_type not in SUPPORTED_TYPES:
         agent_type = "sales"
+    key = (agent_type, lang)
+    now = time.time()
+    cached = _SYSTEM_PROMPT_CACHE.get(key)
+    if cached and now - cached[1] < _SYSTEM_PROMPT_TTL:
+        return cached[0]
     prompt = db.get_system_prompt(agent_type, lang)
-    if prompt:
-        return prompt
-    return _builtin_system_prompt(agent_type, lang)
+    if not prompt:
+        prompt = _builtin_system_prompt(agent_type, lang)
+    _SYSTEM_PROMPT_CACHE[key] = (prompt, now)
+    return prompt
 
 
 def get_agent(agent_type, lang):

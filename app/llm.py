@@ -84,6 +84,7 @@ def ask_llm(messages, lang="en", mode="sales"):
 
 
 def ask_llm_stream(messages, lang="en", mode="sales"):
+    t0 = time.time()
     system_content = _build_system_prompt(lang, mode)
     payload = {
         "model": MODEL_NAME,
@@ -106,7 +107,6 @@ def ask_llm_stream(messages, lang="en", mode="sales"):
     buffer = ""
     in_think = False
     completed = []
-    t0 = time.time()
     t_first_token = None
     metrics = {}
 
